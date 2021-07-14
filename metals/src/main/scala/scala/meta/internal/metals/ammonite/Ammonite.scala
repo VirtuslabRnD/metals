@@ -104,6 +104,12 @@ final class Ammonite(
           )
           _ = {
             lastImportedBuild0 = build0
+            val connections =
+              build0.workspaceBuildTargets.getTargets.asScala.iterator
+                .map(_.getId)
+                .map((_, conn))
+                .toList
+            buildTargetsData.resetConnections(connections)
           }
           _ <- indexWorkspace()
           toCompile = buffers.open.toSeq.filter(_.isAmmoniteScript)

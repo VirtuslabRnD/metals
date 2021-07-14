@@ -633,6 +633,7 @@ class MetalsLanguageServer(
       threads
     )(ec)
   )
+  buildTargets.addData(ammonite.buildTargetsData)
 
   private val indexer = scala.meta.ls.Indexer(
     workspaceReload,
@@ -1534,7 +1535,7 @@ class MetalsLanguageServer(
   }
 
   private val executeCommandHandler = ExecuteCommandHandler(
-    indexer.indexWorkspaceSources,
+    () => indexer.indexWorkspaceSources(buildTargets.allWritableData),
     bloopServers,
     buildServerManager,
     executionContext,

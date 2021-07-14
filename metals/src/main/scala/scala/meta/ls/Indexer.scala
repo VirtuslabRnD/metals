@@ -199,7 +199,6 @@ final case class Indexer(
   private def indexWorkspace(check: () => Unit): Unit = {
     val ammBuild = ammonite.lastImportedBuild
     val lastImportedBuilds0 = lastImportedBuilds()
-    val i = (ammBuild :: lastImportedBuilds0).reduce(_ ++ _)
     timerProvider.timedThunk(
       "reset stuff",
       clientConfig.initialConfig.statistics.isIndex
@@ -265,25 +264,43 @@ final case class Indexer(
     ) {
       workspaceSymbols.indexClasspath()
     }
-    timerProvider.timedThunk(
-      "indexed workspace SemanticDBs",
-      clientConfig.initialConfig.statistics.isIndex
-    ) {
-      semanticDBIndexer.onScalacOptions(i.scalacOptions)
-    }
-    timerProvider.timedThunk(
-      "indexed workspace sources",
-      clientConfig.initialConfig.statistics.isIndex
-    ) {
-      indexWorkspaceSources(buildTargetsData)
-    }
-    timerProvider.timedThunk(
-      "indexed library sources",
-      clientConfig.initialConfig.statistics.isIndex
-    ) {
-      indexJdkSources(buildTargetsData, i.dependencySources)
-      indexDependencySources(buildTargetsData, i.dependencySources)
-    }
+    for ((name, _, importedBuild) <- allBuildTargetsData)
+      timerProvider.timedThunk(
+        s"indexed $name workspace SemanticDBs",
+        clientConfig.initialConfig.statistics.isIndex
+      ) {
+        semanticDBIndexer.onScalacOptions(importedBuild.scalacOptions)
+      }
+    for ((name, data, _) <- allBuildTargetsData)
+      timerProvider.timedThunk(
+        s"indexed workspace $name sources",
+        clientConfig.initialConfig.statistics.isIndex
+      ) {
+        indexWorkspaceSources(data)
+      }
+    var usedJars = Set.empty[AbsolutePath]
+    for ((name, data, importedBuild) <- allBuildTargetsData)
+      timerProvider.timedThunk(
+        "indexed library sources",
+        clientConfig.initialConfig.statistics.isIndex
+      ) {
+        usedJars ++= indexJdkSources(data, importedBuild.dependencySources)
+        usedJars ++= indexDependencySources(
+          data,
+          importedBuild.dependencySources
+        )
+      }
+    // Schedule removal of unused toplevel symbols from cache
+    if (usedJars.nonEmpty)
+      sh.schedule(
+        new Runnable {
+          override def run(): Unit = {
+            tables.jarSymbols.deleteNotUsedTopLevels(usedJars.toArray)
+          }
+        },
+        2,
+        TimeUnit.SECONDS
+      )
 
     focusedDocument().foreach { doc =>
       buildTargets
@@ -291,14 +308,16 @@ final case class Indexer(
         .foreach(focusedDocumentBuildTarget.set)
     }
 
-    val targets = buildTargetsData.all.map(_.id).toSeq
+    val targets = allBuildTargetsData.iterator.flatMap(_._2.all).map(_.id).toSeq
     buildTargetClasses
       .rebuildIndex(targets)
       .foreach(_ => languageClient.refreshModel())
   }
 
-  def indexWorkspaceSources(): Unit =
-    indexWorkspaceSources(buildTargetsData)
+  def indexWorkspaceSources(data: Seq[BuildTargets.WritableData]): Unit = {
+    for (data0 <- data.iterator)
+      indexWorkspaceSources(data)
+  }
   def indexWorkspaceSources(data: BuildTargets.WritableData): Unit = {
     for {
       (sourceItem, targets) <- data.sourceItemsToBuildTarget
@@ -320,7 +339,7 @@ final case class Indexer(
   private def indexDependencySources(
       data: BuildTargets.WritableData,
       dependencySources: b.DependencySourcesResult
-  ): Unit = {
+  ): Set[AbsolutePath] = {
     // Track used Jars so that we can
     // remove cached symbols from Jars
     // that are not used
@@ -354,22 +373,13 @@ final case class Indexer(
           scribe.error(s"error processing $sourceUri", e)
       }
     }
-    // Schedule removal of unused toplevel symbols from cache
-    sh.schedule(
-      new Runnable {
-        override def run(): Unit = {
-          tables.jarSymbols.deleteNotUsedTopLevels(usedJars.toArray)
-        }
-      },
-      2,
-      TimeUnit.SECONDS
-    )
+    usedJars.toSet
   }
 
   private def indexJdkSources(
       data: BuildTargets.WritableData,
       dependencySources: b.DependencySourcesResult
-  ): Unit = {
+  ): Set[AbsolutePath] = {
     // Track used Jars so that we can
     // remove cached symbols from Jars
     // that are not used
@@ -391,17 +401,7 @@ final case class Indexer(
         data.addDependencySource(source, item.getTarget)
       )
     }
-    // Schedule removal of unused toplevel symbols from cache
-    if (usedJars.nonEmpty)
-      sh.schedule(
-        new Runnable {
-          override def run(): Unit = {
-            tables.jarSymbols.deleteNotUsedTopLevels(usedJars.toArray)
-          }
-        },
-        2,
-        TimeUnit.SECONDS
-      )
+    usedJars.toSet
   }
 
   private def indexSourceFile(
@@ -503,7 +503,7 @@ final case class Indexer(
         path,
         buildTargets.inverseSourceItem(path),
         None,
-        Seq(buildTargetsData)
+        Seq(buildTargetsData, ammonite.buildTargetsData)
       )
     }
   }

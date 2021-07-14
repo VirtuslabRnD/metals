@@ -34,6 +34,7 @@ final class BuildTargets(
 ) {
   private var data: BuildTargets.DataSeq =
     BuildTargets.DataSeq(BuildTargets.Data.create(), Nil)
+  def allWritableData = data.writableDataIterator.toSeq
 
   val buildTargetsOrder: BuildTargetIdentifier => Int = {
     (t: BuildTargetIdentifier) =>
@@ -404,7 +405,7 @@ final class BuildTargets(
     )
   }
 
-  def addData(data: BuildTargets.Data): Unit =
+  def addData(data: BuildTargets.WritableData): Unit =
     this.data = BuildTargets.DataSeq(data, this.data.head :: this.data.tail)
 }
 
@@ -538,10 +539,11 @@ object BuildTargets {
     ): Unit
   }
 
-  final case class DataSeq(head: Data, tail: List[Data]) {
-    private lazy val list = head :: tail
-    def iterator = list.iterator
-    def iterable = list.toIterable
+  final case class DataSeq(head: WritableData, tail: List[WritableData]) {
+    private lazy val list: List[Data] = head :: tail
+    def iterator: Iterator[Data] = list.iterator
+    def writableDataIterator: Iterator[WritableData] = (head :: tail).iterator
+    def iterable: Iterable[Data] = list.toIterable
   }
 
   trait WritableData extends Data {
