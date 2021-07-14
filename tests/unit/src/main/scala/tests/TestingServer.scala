@@ -356,7 +356,10 @@ final class TestingServer(
       token <- trees.tokenized(input).get
       if token.isIdentifier
       params = token.toPositionParams(identifier)
-      definition = server.definitionResult(params).asJava.get()
+      definition = server.textDocumentDefinitionHandler
+        .definitionResult(params)
+        .asJava
+        .get()
       if !definition.symbol.isPackage
       if !definition.definition.exists(_.isDependencySource(workspace))
       location <- definition.locations.asScala
@@ -379,7 +382,8 @@ final class TestingServer(
         ref.location.getRange.getStart,
         new ReferenceContext(true)
       )
-      val obtainedLocations = server.referencesResult(params)
+      val obtainedLocations =
+        server.textDocumentReferencesHandler.referencesResult(params)
       references ++= obtainedLocations.locations.map(l =>
         newRef(obtainedLocations.symbol, l)
       )
@@ -1270,7 +1274,7 @@ final class TestingServer(
     var last = List[String]()
     trees.tokenized(input).get.foreach { token =>
       val params = token.toPositionParams(identifier)
-      val definition = server
+      val definition = server.textDocumentDefinitionHandler
         .definitionOrReferences(params, definitionOnly = true)
         .asJava
         .get()
