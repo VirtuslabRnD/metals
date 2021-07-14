@@ -42,7 +42,6 @@ import scala.meta.internal.decorations.SyntheticsDecorationProvider
 import scala.meta.internal.implementation.ImplementationProvider
 import scala.meta.internal.implementation.Supermethods
 import scala.meta.internal.io.FileIO
-import scala.meta.internal.metals.Messages.AmmoniteJvmParametersChange
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.metals.ammonite.Ammonite
 import scala.meta.internal.metals.codeactions.ExtractMemberDefinitionData
@@ -74,7 +73,6 @@ import scala.meta.tokenizers.TokenizeException
 
 import ch.epfl.scala.bsp4j.CompileReport
 import ch.epfl.scala.{bsp4j => b}
-import com.google.gson.JsonElement
 import com.google.gson.JsonPrimitive
 import io.undertow.server.HttpServerExchange
 import org.eclipse.lsp4j.ExecuteCommandParams
@@ -85,6 +83,7 @@ import org.eclipse.lsp4j.jsonrpc.services.JsonRequest
 import org.eclipse.{lsp4j => l}
 import scala.meta.ls.handlers.DidOpenHandler
 import scala.meta.ls.handlers.MetalsDidFocusTextDocumentHandler
+import scala.meta.ls.handlers.WorkspaceDidChangeConfigurationHandler
 
 class MetalsLanguageServer(
     ec: ExecutionContextExecutorService,
@@ -1070,76 +1069,28 @@ class MetalsLanguageServer(
     }
   }
 
+  private val workspaceDidChangeConfigurationHandler =
+    WorkspaceDidChangeConfigurationHandler(
+      executionContext,
+      () => userConfig,
+      userConfig0 => { userConfig = userConfig0 },
+      ammonite,
+      excludedPackageHandler,
+      workspaceSymbols,
+      languageClient,
+      compilers,
+      syntheticsDecorator,
+      () => bspSession,
+      bloopServers,
+      buildServerManager,
+      buildTargets
+    )
+
   @JsonNotification("workspace/didChangeConfiguration")
   def didChangeConfiguration(
       params: DidChangeConfigurationParams
   ): CompletableFuture[Unit] =
-    Future {
-      val json = params.getSettings.asInstanceOf[JsonElement].getAsJsonObject
-      UserConfiguration.fromJson(json) match {
-        case Left(errors) =>
-          errors.foreach { error => scribe.error(s"config error: $error") }
-          Future.successful(())
-        case Right(newUserConfig) =>
-          val old = userConfig
-          userConfig = newUserConfig
-          if (userConfig.excludedPackages != old.excludedPackages) {
-            excludedPackageHandler.update(userConfig.excludedPackages)
-            workspaceSymbols.indexClasspath()
-          }
-
-          userConfig.fallbackScalaVersion.foreach { version =>
-            if (!ScalaVersions.isSupportedScalaVersion(version)) {
-              val params =
-                Messages.UnsupportedScalaVersion.fallbackScalaVersionParams(
-                  version
-                )
-              languageClient.showMessage(params)
-            }
-          }
-
-          if (userConfig.symbolPrefixes != old.symbolPrefixes) {
-            compilers.restartAll()
-          }
-
-          if (
-            userConfig.showImplicitArguments != old.showImplicitArguments ||
-            userConfig.showImplicitConversionsAndClasses != old.showImplicitConversionsAndClasses ||
-            userConfig.showInferredType != old.showInferredType
-          ) {
-            syntheticsDecorator.refresh()
-          }
-
-          bspSession
-            .map { session =>
-              if (session.main.isBloop) {
-                bloopServers.ensureDesiredVersion(
-                  userConfig.currentBloopVersion,
-                  session.version,
-                  userConfig.bloopVersion.nonEmpty,
-                  old.bloopVersion.isDefined,
-                  () => buildServerManager.autoConnectToBuildServer
-                )
-              } else if (
-                userConfig.ammoniteJvmProperties != old.ammoniteJvmProperties && buildTargets.allBuildTargetIds
-                  .exists(Ammonite.isAmmBuildTarget)
-              ) {
-                languageClient
-                  .showMessageRequest(AmmoniteJvmParametersChange.params())
-                  .asScala
-                  .flatMap {
-                    case item if item == AmmoniteJvmParametersChange.restart =>
-                      ammonite.reload()
-                    case _ =>
-                      Future.successful(())
-                  }
-              } else {
-                Future.successful(())
-              }
-            }
-            .getOrElse(Future.successful(()))
-      }
-    }.flatten.asJava
+    workspaceDidChangeConfigurationHandler(params)
 
   @JsonNotification("workspace/didChangeWatchedFiles")
   def didChangeWatchedFiles(
