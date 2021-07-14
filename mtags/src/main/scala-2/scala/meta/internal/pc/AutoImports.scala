@@ -83,7 +83,8 @@ trait AutoImports { this: MetalsGlobal =>
 
         def fileStart = AutoImportPosition(0, 0, padTop = false)
 
-        (if (pos.source.path.endsWith(".sc.scala")) forAmmoniteScript else None)
+        (if (pos.source.path.endsWith(".amm.sc.scala")) forAmmoniteScript
+         else None)
           .orElse(forScalaSource)
           .orElse(Some(fileStart))
     }
