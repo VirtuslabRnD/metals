@@ -84,6 +84,7 @@ import scala.meta.ls.handlers.MetalsDidFocusTextDocumentHandler
 import scala.meta.ls.handlers.WorkspaceDidChangeConfigurationHandler
 import scala.meta.ls.handlers.TextDocumentReferencesHandler
 import scala.meta.ls.handlers.TextDocumentDefinitionHandler
+import scala.meta.ls.handlers.TextDocumentHoverHandler
 
 class MetalsLanguageServer(
     ec: ExecutionContextExecutorService,
@@ -1207,24 +1208,16 @@ class MetalsLanguageServer(
       implementationProvider.implementations(position).asJava
     }
 
+  private val textDocumentHoverHandler = TextDocumentHoverHandler(
+    compilers,
+    syntheticsDecorator,
+    executionContext,
+    worksheetProvider
+  )
+
   @JsonRequest("textDocument/hover")
   def hover(params: TextDocumentPositionParams): CompletableFuture[Hover] =
-    CancelTokens.future { token =>
-      compilers
-        .hover(params, token)
-        .map { hover =>
-          syntheticsDecorator.addSyntheticsHover(params, hover)
-        }
-        .map(
-          _.orElse {
-            val path = params.getTextDocument.getUri.toAbsolutePath
-            if (path.isWorksheet)
-              worksheetProvider.hover(path, params.getPosition())
-            else
-              None
-          }.orNull
-        )
-    }
+    textDocumentHoverHandler(params)
 
   @JsonRequest("textDocument/documentHighlight")
   def documentHighlights(
