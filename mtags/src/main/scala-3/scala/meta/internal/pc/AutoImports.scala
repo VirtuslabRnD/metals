@@ -257,7 +257,8 @@ object AutoImports {
     }
 
     val path = pos.source.path
-    val ammonite = if (path.endsWith(".sc.scala")) forAmmoniteScript else None
+    val ammonite =
+      if (path.endsWith(".amm.sc.scala")) forAmmoniteScript else None
     ammonite
       .orElse(forScalaSource)
       .getOrElse(AutoImportPosition(0, 0, padTop = false))
