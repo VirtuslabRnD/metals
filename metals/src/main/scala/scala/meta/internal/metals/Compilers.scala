@@ -62,7 +62,6 @@ class Compilers(
     statusBar: StatusBar,
     sh: ScheduledExecutorService,
     initializeParams: Option[InitializeParams],
-    diagnostics: Diagnostics,
     isExcludedPackage: String => Boolean,
     scalaVersionSelector: ScalaVersionSelector,
     trees: Trees

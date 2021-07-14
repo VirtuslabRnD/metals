@@ -611,7 +611,6 @@ class MetalsLanguageServer(
             statusBar,
             sh,
             Option(params),
-            diagnostics,
             excludedPackageHandler.isExcludedPackage,
             scalaVersionSelector,
             trees
