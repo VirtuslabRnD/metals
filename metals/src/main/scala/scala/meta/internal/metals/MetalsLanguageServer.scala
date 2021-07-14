@@ -423,7 +423,6 @@ class MetalsLanguageServer(
           statusBar,
           clientConfig,
           shellRunner,
-          clientConfig.icons,
           () => workspace
         )
         bloopServers = new BloopServers(

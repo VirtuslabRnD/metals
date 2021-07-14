@@ -30,7 +30,6 @@ class NewProjectProvider(
     statusBar: StatusBar,
     config: ClientConfiguration,
     shell: ShellRunner,
-    icons: Icons,
     workspace: () => AbsolutePath
 )(implicit context: ExecutionContext) {
 
@@ -61,7 +60,10 @@ class NewProjectProvider(
               )
             if result.statusCode == 200
           } yield {
-            NewProjectProvider.templatesFromText(result.text(), icons.github)
+            NewProjectProvider.templatesFromText(
+              result.text(),
+              config.icons().github
+            )
           }
           allTemplates = all.flatten.toSeq
         }
@@ -72,7 +74,7 @@ class NewProjectProvider(
   def createNewProjectFromTemplate(): Future[Unit] = {
     val base = workspace().parent
     val withTemplate = askForTemplate(
-      NewProjectProvider.curatedTemplates(icons)
+      NewProjectProvider.curatedTemplates(config.icons())
     )
     withTemplate
       .flatMapOption { template =>
@@ -86,7 +88,7 @@ class NewProjectProvider(
         case Some((template, inputPath, Some(projectName))) =>
           createNewProject(
             inputPath,
-            template.label.replace(s"${icons.github}", ""),
+            template.label.replace(s"${config.icons().github}", ""),
             projectName
           )
         // It's fine to just return if the user resigned
@@ -174,7 +176,7 @@ class NewProjectProvider(
         case kind if kind.itemId == NewProjectProvider.more.id =>
           askForTemplate(allTemplatesFromWeb)
         case kind if kind.itemId == NewProjectProvider.back.id =>
-          askForTemplate(NewProjectProvider.curatedTemplates(icons))
+          askForTemplate(NewProjectProvider.curatedTemplates(config.icons()))
         case kind if kind.itemId == NewProjectProvider.custom.id =>
           askForName("", NewScalaProject.enterG8Template)
             .mapOptionInside { g8Path =>
@@ -226,7 +228,7 @@ class NewProjectProvider(
     def quickPickDir(filename: String) = {
       MetalsQuickPickItem(
         id = filename,
-        label = s"${icons.folder} $filename"
+        label = s"${config.icons().folder} $filename"
       )
     }
 
@@ -240,9 +242,9 @@ class NewProjectProvider(
         File.listRoots.map(file => quickPickDir(file.toString())).toList
     }
     val currentDir =
-      MetalsQuickPickItem(id = "ok", label = s"${icons.check} Ok")
+      MetalsQuickPickItem(id = "ok", label = s"${config.icons().check} Ok")
     val parentDir =
-      MetalsQuickPickItem(id = "..", label = s"${icons.folder} ..")
+      MetalsQuickPickItem(id = "..", label = s"${config.icons().folder} ..")
     val includeUpAndCurrent =
       if (from.isDefined) List(currentDir, parentDir) else Nil
     client
