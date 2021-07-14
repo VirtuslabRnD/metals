@@ -12,10 +12,8 @@ import scala.util.Try
 
 import scala.meta.inputs.Input
 import scala.meta.inputs.Position
-import scala.meta.internal.builds.SbtBuildTool
 import scala.meta.internal.metals.Compilers.PresentationCompilerKey
 import scala.meta.internal.metals.MetalsEnrichments._
-import scala.meta.internal.metals.ammonite.Ammonite
 import scala.meta.internal.parsing.Trees
 import scala.meta.internal.pc.EmptySymbolSearch
 import scala.meta.internal.pc.LogMessages
@@ -54,7 +52,6 @@ class Compilers(
     workspace: () => AbsolutePath,
     config: ClientConfiguration,
     userConfig: () => UserConfiguration,
-    ammonite: () => Ammonite,
     buildTargets: BuildTargets,
     buffers: Buffers,
     search: SymbolSearch,
@@ -64,7 +61,8 @@ class Compilers(
     initializeParams: Option[InitializeParams],
     isExcludedPackage: String => Boolean,
     scalaVersionSelector: ScalaVersionSelector,
-    trees: Trees
+    trees: Trees,
+    sourceMapper: scala.meta.ls.SourceMapper
 )(implicit ec: ExecutionContextExecutorService)
     extends Cancelable {
   val plugins = new CompilerPlugins()
@@ -487,24 +485,6 @@ class Compilers(
     }
   }
 
-  private def ammoniteInputPosOpt(
-      path: AbsolutePath,
-      position: LspPosition
-  ): Option[(Input.VirtualFile, LspPosition)] =
-    if (path.isAmmoniteScript)
-      for {
-        target <-
-          buildTargets
-            .inverseSources(path)
-        res <- ammonite().generatedScalaInputForPc(
-          target,
-          path,
-          position
-        )
-      } yield res
-    else
-      None
-
   private def withPCAndAdjustLsp[T](
       params: SelectionRangeParams
   )(fn: (PresentationCompiler, ju.List[Position]) => T): T = {
@@ -547,28 +527,7 @@ class Compilers(
     val path = uri.toAbsolutePath
     val position = params.getPosition
 
-    def input = path.toInputFromBuffers(buffers)
-    def default = (input, position, AdjustedLspData.default)
-
-    val forScripts =
-      if (path.isAmmoniteScript) {
-        ammoniteInputPosOpt(path, position)
-          .map { case (input, pos) =>
-            (input, pos, Ammonite.adjustLspData(input.text))
-          }
-      } else if (path.isSbt) {
-        buildTargets
-          .sbtAutoImports(path)
-          .map(
-            SbtBuildTool.sbtInputPosAdjustment(input, _, position)
-          )
-      } else if (
-        path.isWorksheet && ScalaVersions.isScala3Version(scalaVersion)
-      ) {
-        WorksheetProvider.worksheetScala3Adjustments(input, uri, position)
-      } else None
-
-    forScripts.getOrElse(default)
+    sourceMapper.actualSourceForPc(path, position, scalaVersion)
   }
 
   private def configure(
