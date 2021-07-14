@@ -67,11 +67,13 @@ final case class DidOpenHandler(
       interactiveSemanticdbs.textDocument(path)
     }
     if (path.isDependencySource(workspace())) {
-      CancelTokens { _ =>
-        // publish diagnostics
-        interactiveSemanticdbs.didFocus(path)
-        ()
-      }
+      CancelTokens.future { _ =>
+        Future {
+          // publish diagnostics
+          interactiveSemanticdbs.didFocus(path)
+          ()
+        }(ec)
+      }(ec)
     } else {
       if (path.isAmmoniteScript)
         ammonite.maybeImport(path)

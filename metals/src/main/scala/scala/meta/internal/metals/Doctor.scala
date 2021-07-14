@@ -35,7 +35,7 @@ final case class Doctor(
     tables: Tables,
     clientConfig: ClientConfiguration,
     hasProblems: AtomicBoolean
-)(implicit ec: ExecutionContext) {
+)(ec: ExecutionContext) {
   private val problemResolver =
     new ProblemResolver(
       workspace,
@@ -133,13 +133,16 @@ final case class Doctor(
           import scala.meta.internal.metals.Messages.CheckDoctor
           val params = CheckDoctor.params(problem)
           hasProblems.set(true)
-          languageClient.showMessageRequest(params).asScala.foreach { item =>
-            if (item == CheckDoctor.moreInformation) {
-              executeRunDoctor()
-            } else if (item == CheckDoctor.dismissForever) {
-              notification.dismissForever()
-            }
-          }
+          languageClient
+            .showMessageRequest(params)
+            .asScala
+            .foreach({ item =>
+              if (item == CheckDoctor.moreInformation) {
+                executeRunDoctor()
+              } else if (item == CheckDoctor.dismissForever) {
+                notification.dismissForever()
+              }
+            })(ec)
         }
       case None =>
         () // All OK.

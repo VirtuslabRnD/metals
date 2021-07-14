@@ -6,7 +6,6 @@ import java.util.Collections
 import java.util.concurrent.ScheduledExecutorService
 import java.{util => ju}
 
-import scala.concurrent.ExecutionContextExecutorService
 import scala.concurrent.Future
 import scala.util.Try
 
@@ -41,6 +40,7 @@ import org.eclipse.lsp4j.SignatureHelp
 import org.eclipse.lsp4j.TextDocumentPositionParams
 import org.eclipse.lsp4j.TextEdit
 import org.eclipse.lsp4j.{Position => LspPosition}
+import scala.meta.ls.MetalsThreads
 
 /**
  * Manages lifecycle for presentation compilers in all build targets.
@@ -62,9 +62,9 @@ class Compilers(
     isExcludedPackage: String => Boolean,
     scalaVersionSelector: ScalaVersionSelector,
     trees: Trees,
-    sourceMapper: scala.meta.ls.SourceMapper
-)(implicit ec: ExecutionContextExecutorService)
-    extends Cancelable {
+    sourceMapper: scala.meta.ls.SourceMapper,
+    threads: MetalsThreads
+) extends Cancelable {
   val plugins = new CompilerPlugins()
 
   // Not a TrieMap because we want to avoid loading duplicate compilers for the same build target.
@@ -163,7 +163,7 @@ class Compilers(
   def load(paths: Seq[AbsolutePath]): Future[Unit] =
     if (Testing.isEnabled) Future.successful(())
     else {
-      Future {
+      Future({
         val targets = paths
           .flatMap(path => buildTargets.inverseSources(path).toList)
           .distinct
@@ -178,7 +178,7 @@ class Compilers(
             )
           }
         }
-      }
+      })(threads.pcEc)
     }
 
   def didClose(path: AbsolutePath): Unit = {
@@ -207,6 +207,7 @@ class Compilers(
       AdjustedLspData.default
     )
 
+    implicit val ec0 = threads.dummyEc
     for {
       ds <-
         pc
@@ -259,6 +260,7 @@ class Compilers(
       token: CancelToken
   ): Future[CompletionList] =
     withPCAndAdjustLsp(params) { (pc, pos, adjust) =>
+      implicit val ec0 = threads.dummyEc
       pc.complete(CompilerOffsetParams.fromPos(pos, token))
         .asScala
         .map { list =>
@@ -273,6 +275,7 @@ class Compilers(
       token: CancelToken
   ): Future[ju.List[AutoImportsResult]] = {
     withPCAndAdjustLsp(params) { (pc, pos, adjust) =>
+      implicit val ec0 = threads.dummyEc
       pc.autoImports(name, CompilerOffsetParams.fromPos(pos, token))
         .asScala
         .map { list =>
@@ -287,6 +290,7 @@ class Compilers(
       token: CancelToken
   ): Future[ju.List[TextEdit]] = {
     withPCAndAdjustLsp(params) { (pc, pos, adjust) =>
+      implicit val ec0 = threads.dummyEc
       pc.insertInferredType(CompilerOffsetParams.fromPos(pos, token))
         .asScala
         .map { edits =>
@@ -300,6 +304,7 @@ class Compilers(
       token: CancelToken
   ): Future[ju.List[TextEdit]] = {
     withPCAndAdjustLsp(params) { (pc, pos, adjust) =>
+      implicit val ec0 = threads.dummyEc
       pc.implementAbstractMembers(CompilerOffsetParams.fromPos(pos, token))
         .asScala
         .map { edits =>
@@ -313,6 +318,7 @@ class Compilers(
       token: CancelToken
   ): Future[Option[Hover]] =
     withPCAndAdjustLsp(params) { (pc, pos, adjust) =>
+      implicit val ec0 = threads.dummyEc
       pc.hover(CompilerOffsetParams.fromPos(pos, token))
         .asScala
         .map(_.asScala.map { hover => adjust.adjustHoverResp(hover) })
@@ -323,6 +329,7 @@ class Compilers(
       token: CancelToken
   ): Future[DefinitionResult] =
     withPCAndAdjustLsp(params) { (pc, pos, adjust) =>
+      implicit val ec0 = threads.dummyEc
       pc.definition(CompilerOffsetParams.fromPos(pos, token))
         .asScala
         .map { c =>
@@ -536,7 +543,7 @@ class Compilers(
   ): PresentationCompiler = {
     val params = initializeParams()
     pc.withSearch(search)
-      .withExecutorService(ec)
+      .withExecutorService(threads.pcExecutorService)
       .withWorkspace(workspace().toNIO)
       .withScheduledExecutorService(sh)
       .withConfiguration(

@@ -14,15 +14,15 @@ import scala.meta.pc.CancelToken
 /**
  * A cancel token backed by a Scala future.
  */
-case class FutureCancelToken(f: Future[Boolean])(implicit ec: ExecutionContext)
+case class FutureCancelToken(f: Future[Boolean])(ec: ExecutionContext)
     extends CancelToken {
   var isCancelled: Boolean = false
-  f.onComplete {
+  f.onComplete({
     case Failure(_) =>
       isCancelled = true
     case Success(cancel) =>
       isCancelled = cancel
-  }
+  })(ec)
 
   override def checkCanceled(): Unit = {
     if (isCancelled) {
@@ -31,12 +31,12 @@ case class FutureCancelToken(f: Future[Boolean])(implicit ec: ExecutionContext)
   }
 
   override def onCancel(): CompletionStage[lang.Boolean] =
-    f.map(cancel => java.lang.Boolean.valueOf(cancel)).toJava
+    f.map(cancel => java.lang.Boolean.valueOf(cancel))(ec).toJava
 }
 
 object FutureCancelToken {
   def fromUnit(
       f: Future[Unit]
-  )(implicit ec: ExecutionContext): FutureCancelToken =
-    FutureCancelToken(f.map(_ => true))
+  )(ec: ExecutionContext): FutureCancelToken =
+    FutureCancelToken(f.map(_ => true)(ec))(ec)
 }

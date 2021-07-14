@@ -31,7 +31,7 @@ class NewProjectProvider(
     config: ClientConfiguration,
     shell: ShellRunner,
     workspace: () => AbsolutePath
-)(implicit context: ExecutionContext) {
+)(context: ExecutionContext) {
 
   private val templatesUrl =
     "https://github.com/foundweekends/giter8/wiki/giter8-templates.md"
@@ -76,6 +76,7 @@ class NewProjectProvider(
     val withTemplate = askForTemplate(
       NewProjectProvider.curatedTemplates(config.icons())
     )
+    implicit val ec0 = context
     withTemplate
       .flatMapOption { template =>
         askForPath(Some(base)).mapOptionInside { path => (template, path) }
@@ -108,6 +109,7 @@ class NewProjectProvider(
       template,
       s"--name=${projectPath.filename}"
     )
+    implicit val ec0 = context
     shell
       .runJava(
         giterDependency,
@@ -144,6 +146,7 @@ class NewProjectProvider(
     }
 
     if (config.isOpenNewWindowProvider()) {
+      implicit val ec0 = context
       client
         .showMessageRequest(NewScalaProject.askForNewWindowParams())
         .asScala
@@ -164,6 +167,7 @@ class NewProjectProvider(
   private def askForTemplate(
       templates: Seq[MetalsQuickPickItem]
   ): Future[Option[MetalsQuickPickItem]] = {
+    implicit val ec0 = context
     client
       .metalsQuickPick(
         MetalsQuickPickParams(
@@ -200,6 +204,7 @@ class NewProjectProvider(
       prompt: String
   ): Future[Option[String]] = {
     if (config.isInputBoxEnabled()) {
+      implicit val ec0 = context
       client
         .metalsInputBox(
           MetalsInputBoxParams(
@@ -247,6 +252,7 @@ class NewProjectProvider(
       MetalsQuickPickItem(id = "..", label = s"${config.icons().folder} ..")
     val includeUpAndCurrent =
       if (from.isDefined) List(currentDir, parentDir) else Nil
+    implicit val ec0 = context
     client
       .metalsQuickPick(
         MetalsQuickPickParams(

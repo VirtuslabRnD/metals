@@ -17,6 +17,7 @@ import scala.meta.internal.parsing.TokenEditDistance
 import scala.meta.internal.parsing.Trees
 import scala.meta.internal.metals.StatusBar
 import scala.concurrent.ExecutionContextExecutorService
+import scala.concurrent.Future
 
 final case class TextDocumentReferencesHandler(
     time: Time,
@@ -32,7 +33,9 @@ final case class TextDocumentReferencesHandler(
   private implicit def ec = executionContext
 
   def apply(params: ReferenceParams): CompletableFuture[util.List[Location]] =
-    CancelTokens { _ => referencesResult(params).locations.asJava }
+    CancelTokens.future { _ =>
+      Future(referencesResult(params).locations.asJava)(ec)
+    }(ec)
 
   def referencesResult(params: ReferenceParams): ReferencesResult = {
     val timer = new Timer(time)

@@ -38,7 +38,7 @@ final case class TextDocumentDefinitionHandler(
   ): CompletableFuture[java.util.List[Location]] =
     CancelTokens.future { token =>
       definitionOrReferences(position, token).map(_.locations)
-    }
+    }(ec)
 
   /**
    * Returns the the definition location or reference locations of a symbol

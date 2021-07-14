@@ -32,7 +32,7 @@ class ScalafixProvider(
     languageClient: MetalsLanguageClient,
     buildTargets: BuildTargets,
     buildClient: MetalsBuildClient
-)(implicit ec: ExecutionContext) {
+)(ec: ExecutionContext) {
   import ScalafixProvider._
   private val scalafixCache = TrieMap.empty[ScalaBinaryVersion, Scalafix]
   private val organizeImportRuleCache =
@@ -74,6 +74,7 @@ class ScalafixProvider(
       )
       Future.successful(Nil)
     } else {
+      implicit val ec0 = ec
       compilations.compilationFinished(file).flatMap { _ =>
         val scalafixEvaluation = scalafixEvaluate(file, scalaTarget)
 

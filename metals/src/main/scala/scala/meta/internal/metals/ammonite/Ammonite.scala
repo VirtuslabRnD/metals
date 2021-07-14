@@ -29,6 +29,7 @@ import ammrunner.{Command => AmmCommand}
 import ammrunner.{Versions => AmmVersions}
 import ch.epfl.scala.bsp4j.BuildTargetIdentifier
 import org.eclipse.lsp4j.Position
+import scala.meta.ls.MetalsThreads
 
 final class Ammonite(
     buffers: Buffers,
@@ -47,8 +48,9 @@ final class Ammonite(
     buildTargets: BuildTargets,
     buildTools: BuildTools,
     config: () => MetalsServerConfig,
-    scalaVersionSelector: ScalaVersionSelector
-)(implicit ec: ExecutionContextExecutorService)
+    scalaVersionSelector: ScalaVersionSelector,
+    threads: MetalsThreads
+)(ec: ExecutionContextExecutorService)
     extends Cancelable {
 
   def buildServer: Option[BuildServerConnection] =
@@ -91,6 +93,7 @@ final class Ammonite(
         Future.failed(new Exception("No Ammonite build server running"))
       case Some(conn) =>
         compilers.cancel()
+        implicit val ec0 = ec
         for {
           build0 <- statusBar.trackFuture(
             "Importing Ammonite scripts",
@@ -116,6 +119,7 @@ final class Ammonite(
     scribe.info(s"Connected to Ammonite Build server v${build.version}")
     cancelables.add(build)
     buildServer0 = Some(build)
+    implicit val ec0 = ec
     for {
       _ <- importBuild()
     } yield BuildChange.Reconnected
@@ -184,14 +188,14 @@ final class Ammonite(
     if (path.isAmmoniteScript && !isMillBuildSc(path) && !loaded(path)) {
 
       def doImport(): Unit =
-        start(Some(path)).onComplete {
+        start(Some(path)).onComplete({
           case Failure(e) =>
             languageClient.showMessage(
               Messages.ImportAmmoniteScript.ImportFailed(path.toString)
             )
             scribe.warn(s"Error importing Ammonite script $path", e)
           case Success(_) =>
-        }
+        })(ec)
 
       val autoImport =
         tables.dismissedNotifications.AmmoniteImportAuto.isDismissed
@@ -202,7 +206,7 @@ final class Ammonite(
         val futureResp = languageClient
           .showMessageRequest(Messages.ImportAmmoniteScript.params())
           .asScala
-        futureResp.onComplete {
+        futureResp.onComplete({
           case Failure(e) => scribe.warn("Error requesting Ammonite import", e)
           case Success(resp) =>
             resp.getTitle match {
@@ -214,21 +218,21 @@ final class Ammonite(
                 doImport()
               case _ =>
             }
-        }
-        futureResp.ignoreValue
+        })(ec)
+        futureResp.ignoreValue(ec)
       }
     } else
       Future.unit
 
-  def reload(): Future[Unit] = stop().asScala.flatMap(_ => start())
+  def reload(): Future[Unit] = stop().asScala.flatMap(_ => start())(ec)
 
   def start(doc: Option[AbsolutePath] = None): Future[Unit] = {
 
-    disconnectOldBuildServer().onComplete {
+    disconnectOldBuildServer().onComplete({
       case Failure(e) =>
         scribe.warn("Error disconnecting old Ammonite build server", e)
       case Success(()) =>
-    }
+    })(ec)
 
     val docs = (doc.toSeq ++ focusedDocument().toSeq ++ buffers.open.toSeq)
     val commandScriptOpt = docs
@@ -242,6 +246,7 @@ final class Ammonite(
         Future.failed(new AmmoniteMetalsException(msg))
       }
 
+    implicit val ec0 = ec
     commandScriptOpt
       .flatMap { case (command, script) =>
         val extraScripts = buffers.open.toVector
@@ -259,11 +264,13 @@ final class Ammonite(
                 commandWithJVMOpts,
                 script +: extraScripts,
                 workspace()
-              ),
+              )(ec),
           tables.dismissedNotifications.ReconnectAmmonite,
           config(),
-          "Ammonite"
+          "Ammonite",
+          threads
         )
+        implicit val ec0 = ec
         for {
           conn <- futureConn
           _ <- connectToNewBuildServer(conn)
@@ -272,7 +279,7 @@ final class Ammonite(
       .recoverWith {
         case t @ (_: AmmoniteFetcherException | _: AmmoniteMetalsException) =>
           languageClient.showMessage(Messages.errorFromThrowable(t))
-          Future(())
+          Future.successful(())
       }
   }
 
@@ -358,10 +365,10 @@ object Ammonite {
         proc.waitFor()
         finished.success(())
         ()
-      }.onComplete {
+      }(ec).onComplete {
         case Success(()) =>
         case f @ Failure(_) => finished.tryComplete(f)
-      }
+      }(ec)
       SocketConnection(
         "Ammonite",
         os,
@@ -372,6 +379,6 @@ object Ammonite {
         ),
         finished
       )
-    }
+    }(ec)
 
 }

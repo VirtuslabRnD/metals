@@ -54,7 +54,7 @@ final case class DefinitionProvider(
     trees: Trees,
     buildTargets: BuildTargets,
     scalaVersionSelector: ScalaVersionSelector
-)(implicit ec: ExecutionContext) {
+)(ec: ExecutionContext) {
 
   private val destinationProvider = DestinationProvider(
     index,
@@ -81,10 +81,12 @@ final case class DefinitionProvider(
     }
     val fromIndex =
       if (fromSnapshot.isEmpty && remote.isEnabledForPath(path)) {
+        implicit val ec0 = ec
         remote.definition(params).map(_.getOrElse(fromSnapshot))
       } else {
         Future.successful(fromSnapshot)
       }
+    implicit val ec0 = ec
     fromIndex.flatMap { result =>
       if (result.isEmpty) {
         compilers.definition(params, token)

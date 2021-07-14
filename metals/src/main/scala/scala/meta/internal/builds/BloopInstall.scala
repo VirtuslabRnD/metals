@@ -2,7 +2,6 @@ package scala.meta.internal.builds
 
 import java.util.concurrent.TimeUnit
 
-import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 
 import scala.meta.internal.builds.Digest.Status
@@ -14,6 +13,7 @@ import scala.meta.internal.metals.MetalsLanguageClient
 import scala.meta.internal.metals.Tables
 import scala.meta.internal.process.ExitCodes
 import scala.meta.io.AbsolutePath
+import scala.meta.ls.MetalsThreads
 
 /**
  * Runs `sbt/gradle/mill/mvn bloopInstall` processes.
@@ -28,8 +28,9 @@ final case class BloopInstall(
     languageClient: MetalsLanguageClient,
     buildTools: BuildTools,
     tables: Tables,
-    shellRunner: ShellRunner
-)(implicit ec: ExecutionContext) {
+    shellRunner: ShellRunner,
+    threads: MetalsThreads
+) {
 
   override def toString: String = s"BloopInstall(${workspace()})"
 
@@ -42,12 +43,12 @@ final case class BloopInstall(
       args => {
         scribe.info(s"running '${args.mkString(" ")}'")
         val process = runArgumentsUnconditionally(buildTool, args)
-        process.foreach { e =>
+        process.foreach({ e =>
           if (e.isFailed) {
             // Record the exact command that failed to help troubleshooting.
             scribe.error(s"$buildTool command failed: ${args.mkString(" ")}")
           }
-        }
+        })(threads.dummyEc)
         process
       }
     )
@@ -74,13 +75,13 @@ final case class BloopInstall(
         case ExitCodes.Success => WorkspaceLoadedStatus.Installed
         case ExitCodes.Cancel => WorkspaceLoadedStatus.Cancelled
         case result => WorkspaceLoadedStatus.Failed(result)
-      }
+      }(threads.dummyEc)
     processFuture.foreach { result =>
       try result.toChecksumStatus.foreach(persistChecksumStatus(_, buildTool))
       catch {
         case _: InterruptedException =>
       }
-    }
+    }(threads.dummyEc) // !!!
     processFuture
   }
 
@@ -113,6 +114,7 @@ final case class BloopInstall(
           scribe.info(s"skipping build import with status '${result.name}'")
           Future.successful(result)
         case None =>
+          implicit val ec0 = threads.dummyEc
           for {
             userResponse <- requestImport(
               buildTools,
@@ -125,8 +127,10 @@ final case class BloopInstall(
                 runUnconditionally(buildTool)
               } else {
                 // Don't spam the user with requests during rapid build changes.
-                notification.dismiss(2, TimeUnit.MINUTES)
-                Future.successful(WorkspaceLoadedStatus.Rejected)
+                Future {
+                  notification.dismiss(2, TimeUnit.MINUTES)
+                  WorkspaceLoadedStatus.Rejected
+                }(threads.dbEc)
               }
             }
           } yield installResult
@@ -147,7 +151,7 @@ final case class BloopInstall(
       buildTool: BuildTool,
       languageClient: MetalsLanguageClient,
       digest: String
-  )(implicit ec: ExecutionContext): Future[Confirmation] = {
+  ): Future[Confirmation] = {
     tables.digests.setStatus(digest, Status.Requested)
     val (params, yes) =
       if (buildTools.isBloop) {
@@ -160,11 +164,15 @@ final case class BloopInstall(
     languageClient
       .showMessageRequest(params)
       .asScala
-      .map { item =>
+      .flatMap { item =>
+        val res = Confirmation.fromBoolean(item == yes)
         if (item == dontShowAgain) {
-          notification.dismissForever()
-        }
-        Confirmation.fromBoolean(item == yes)
-      }
+          Future {
+            notification.dismissForever()
+            res
+          }(threads.dbEc)
+        } else
+          Future.successful(res)
+      }(threads.dummyEc)
   }
 }

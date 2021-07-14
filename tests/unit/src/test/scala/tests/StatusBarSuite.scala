@@ -1,6 +1,5 @@
 package tests
 
-import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Promise
 
 import scala.meta.internal.io.PathIO
@@ -8,15 +7,23 @@ import scala.meta.internal.metals.Buffers
 import scala.meta.internal.metals.ClientConfiguration
 import scala.meta.internal.metals.ProgressTicks
 import scala.meta.internal.metals.StatusBar
+import scala.meta.ls.MetalsThreads
+import java.util.concurrent.Executors
+import scala.concurrent.ExecutionContext
 
 class StatusBarSuite extends BaseSuite {
   val time = new FakeTime
   val client = new TestingClient(PathIO.workingDirectory, Buffers())
+  val es = Executors.newCachedThreadPool()
+  override def afterAll(): Unit = {
+    es.shutdown()
+  }
   var status = new StatusBar(
     client,
     time,
     ProgressTicks.dots,
-    ClientConfiguration.Default
+    ClientConfiguration.Default,
+    MetalsThreads(ExecutionContext.fromExecutorService(es))
   )
   override def beforeEach(context: BeforeEach): Unit = {
     client.statusParams.clear()

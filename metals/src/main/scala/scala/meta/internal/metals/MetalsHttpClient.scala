@@ -52,7 +52,7 @@ final class MetalsHttpClient(
     time: Time,
     sh: ScheduledExecutorService,
     clientConfig: ClientConfiguration
-)(implicit ec: ExecutionContext)
+)(ec: ExecutionContext)
     extends DelegatingLanguageClient(initial) {
 
   override def metalsExecuteClientCommand(
@@ -114,7 +114,7 @@ final class MetalsHttpClient(
       1,
       TimeUnit.SECONDS
     )
-    fromEditorCompletable.asScala.onComplete { _ => triggerReload() }
+    fromEditorCompletable.asScala.onComplete { _ => triggerReload() }(ec)
     fromEditorCompletable
   }
 
@@ -164,7 +164,7 @@ final class MetalsHttpClient(
       MessageRequest(nextId(), params, fromEditorCompletable)
     )
     triggerReload()
-    fromEditorCompletable.asScala.onComplete { _ => triggerReload() }
+    fromEditorCompletable.asScala.onComplete { _ => triggerReload() }(ec)
     fromEditorCompletable
   }
 

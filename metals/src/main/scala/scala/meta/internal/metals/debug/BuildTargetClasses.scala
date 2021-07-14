@@ -1,7 +1,6 @@
 package scala.meta.internal.metals.debug
 
 import scala.collection.concurrent.TrieMap
-import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 
 import scala.meta.internal.metals.BatchedFunction
@@ -13,17 +12,22 @@ import scala.meta.internal.semanticdb.Scala.Descriptor
 import scala.meta.internal.semanticdb.Scala.Symbols
 
 import ch.epfl.scala.{bsp4j => b}
+import scala.meta.ls.MetalsThreads
 
 /**
  * In-memory index of main class symbols grouped by their enclosing build target
  */
 final class BuildTargetClasses(
-    buildTargets: BuildTargets
-)(implicit val ec: ExecutionContext) {
+    buildTargets: BuildTargets,
+    threads: MetalsThreads
+) {
   private val index = TrieMap.empty[b.BuildTargetIdentifier, Classes]
 
   val rebuildIndex: BatchedFunction[b.BuildTargetIdentifier, Unit] =
-    BatchedFunction.fromFuture(fetchClasses)
+    BatchedFunction.fromFuture(fetchClasses)(
+      threads.dummyBatchedFunctionEc,
+      implicitly
+    )
 
   def classesOf(target: b.BuildTargetIdentifier): Classes = {
     index.getOrElse(target, new Classes)
@@ -57,6 +61,7 @@ final class BuildTargetClasses(
   private def fetchClasses(
       targets: Seq[b.BuildTargetIdentifier]
   ): Future[Unit] = {
+    implicit val ec0 = threads.dummyEc
     Future
       .traverse(targets.groupBy(buildTargets.buildServerOf)) {
         case (None, _) =>

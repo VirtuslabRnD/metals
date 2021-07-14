@@ -19,14 +19,14 @@ import scala.meta.io.AbsolutePath
 
 import com.zaxxer.nuprocess.NuProcessBuilder
 import coursierapi._
+import scala.meta.ls.MetalsThreads
 
 class ShellRunner(
     languageClient: MetalsLanguageClient,
     userConfig: () => UserConfiguration,
     time: Time,
-    statusBar: StatusBar
-)(implicit
-    executionContext: scala.concurrent.ExecutionContext
+    statusBar: StatusBar,
+    threads: MetalsThreads
 ) extends Cancelable {
 
   private val cancelables = new MutableCancelable()
@@ -86,24 +86,27 @@ class ShellRunner(
         new MetalsSlowTaskParams(commandRun)
       )
     handler.response = Some(taskResponse)
-    val processFuture = handler.completeProcess.future.map { result =>
+    val processFuture = handler.completeProcess.future.map({ result =>
       taskResponse.cancel(false)
       scribe.info(
         s"time: ran '$commandRun' in $elapsed"
       )
       result
-    }
+    })(threads.dummyEc)
     statusBar.trackFuture(
       s"Running '$commandRun'",
       processFuture
     )
-    taskResponse.asScala.foreach { item =>
+    taskResponse.asScala.flatMap({ item =>
       if (item.cancel) {
-        scribe.info(s"user cancelled $commandRun")
-        handler.completeProcess.trySuccess(ExitCodes.Cancel)
-        ProcessHandler.destroyProcess(runningProcess)
-      }
-    }
+        Future {
+          scribe.info(s"user cancelled $commandRun")
+          handler.completeProcess.trySuccess(ExitCodes.Cancel)
+          ProcessHandler.destroyProcess(runningProcess)
+        }(threads.shellDestroyProcEc)
+      } else
+        Future.unit
+    })(threads.dummyEc) // !!!
     cancelables
       .add(() => ProcessHandler.destroyProcess(runningProcess))
       .add(() => taskResponse.cancel(false))

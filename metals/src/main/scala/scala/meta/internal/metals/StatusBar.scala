@@ -6,7 +6,6 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.Promise
 import scala.util.Failure
@@ -18,6 +17,7 @@ import scala.meta.internal.metals.config.StatusBarState
 
 import org.eclipse.lsp4j.MessageParams
 import org.eclipse.lsp4j.MessageType
+import scala.meta.ls.MetalsThreads
 
 /**
  * Manages sending metals/status notifications to the editor client.
@@ -36,9 +36,9 @@ final class StatusBar(
     client: MetalsLanguageClient,
     time: Time,
     progressTicks: ProgressTicks = ProgressTicks.braille,
-    clientConfig: ClientConfiguration
-)(implicit ec: ExecutionContext)
-    extends Cancelable {
+    clientConfig: ClientConfiguration,
+    threads: MetalsThreads
+) extends Cancelable {
   def trackBlockingTask[T](message: String)(thunk: => T): T = {
     val promise = Promise[Unit]()
     trackFuture(message, promise.future)
@@ -77,7 +77,7 @@ final class StatusBar(
           task.cancel(true)
         case Success(_) =>
           task.cancel(true)
-      }
+      }(threads.dummyEc) // FIXME Can't client.logMessage below block?
     }
   }
 

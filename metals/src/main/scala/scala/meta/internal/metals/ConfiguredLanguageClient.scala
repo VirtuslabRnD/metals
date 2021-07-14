@@ -25,7 +25,7 @@ import org.eclipse.lsp4j.ShowMessageRequestParams
 final class ConfiguredLanguageClient(
     initial: MetalsLanguageClient,
     clientConfig: ClientConfiguration
-)(implicit ec: ExecutionContext)
+)(ec: ExecutionContext)
     extends DelegatingLanguageClient(initial) {
 
   override def shutdown(): Unit = {
@@ -66,7 +66,7 @@ final class ConfiguredLanguageClient(
   ): CompletableFuture[MessageActionItem] = {
     pendingShowMessage.set(true)
     val result = underlying.showMessageRequest(params)
-    result.asScala.onComplete(_ => pendingShowMessage.set(false))
+    result.asScala.onComplete(_ => pendingShowMessage.set(false))(ec)
     result
   }
 
@@ -115,7 +115,7 @@ final class ConfiguredLanguageClient(
       showMessageRequest(
         toShowMessageRequestParams(params)
       ).asScala
-        .map(item => MetalsQuickPickResult(itemId = item.getTitle()))
+        .map(item => MetalsQuickPickResult(itemId = item.getTitle()))(ec)
         .asJava
     }
   }

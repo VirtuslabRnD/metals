@@ -17,19 +17,20 @@ import org.eclipse.lsp4j.MessageActionItem
 final case class BuildToolSelector(
     languageClient: MetalsLanguageClient,
     tables: Tables
-)(implicit ec: ExecutionContext) {
+)(ec: ExecutionContext) {
   def checkForChosenBuildTool(
       buildTools: List[BuildTool]
   ): Future[Option[BuildTool]] =
     tables.buildTool.selectedBuildTool match {
       case Some(chosen) =>
-        Future(buildTools.find(_.executableName == chosen))
+        Future(buildTools.find(_.executableName == chosen))(ec)
       case None => requestBuildToolChoice(buildTools)
     }
 
   private def requestBuildToolChoice(
       buildTools: List[BuildTool]
   ): Future[Option[BuildTool]] = {
+    implicit val ec0 = ec
     languageClient
       .showMessageRequest(ChooseBuildTool.params(buildTools))
       .asScala

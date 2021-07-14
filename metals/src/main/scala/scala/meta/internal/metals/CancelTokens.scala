@@ -20,14 +20,9 @@ import scala.meta.pc.CancelToken
  * `token.checkCancelled()`, which is not possible  inside the compiler.
  */
 object CancelTokens {
-  def apply[T](
-      fn: CancelToken => T
-  )(implicit ec: ExecutionContextExecutorService): CompletableFuture[T] = {
-    future[T](token => Future(fn(token)))
-  }
   def future[T](
       fn: CancelToken => Future[T]
-  )(implicit ec: ExecutionContextExecutorService): CompletableFuture[T] = {
+  )(ec: ExecutionContextExecutorService): CompletableFuture[T] = {
     val token = Promise[Unit]()
     val result = new CompletableFuture[T]() {
       override def cancel(mayInterruptIfRunning: Boolean): Boolean = {
@@ -35,12 +30,12 @@ object CancelTokens {
         super.cancel(mayInterruptIfRunning)
       }
     }
-    fn(FutureCancelToken.fromUnit(token.future)).onComplete {
+    fn(FutureCancelToken.fromUnit(token.future)(ec)).onComplete({
       case Failure(exception) =>
         result.completeExceptionally(exception)
       case Success(value) =>
         result.complete(value)
-    }
+    })(ec)
     // NOTE(olafur): we cannot use `Future.asJava` or `CompletableFuture.handleAsync`
     // since those methods return a `CompletableFuture` that doesn't contain the
     // custom `override def cancel()` above.

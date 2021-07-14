@@ -3,7 +3,6 @@ package scala.meta.internal.remotels
 import java.{util => ju}
 
 import scala.concurrent.Await
-import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 import scala.util.Try
@@ -24,14 +23,16 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonPrimitive
 import org.eclipse.lsp4j.Location
 import org.eclipse.{lsp4j => l}
+import scala.meta.ls.MetalsThreads
 
 final case class RemoteLanguageServer(
     workspace: () => AbsolutePath,
     userConfig: () => UserConfiguration,
     serverConfig: MetalsServerConfig,
     buffers: Buffers,
-    buildTargets: BuildTargets
-)(implicit ec: ExecutionContext) {
+    buildTargets: BuildTargets,
+    threads: MetalsThreads
+) {
   val timeout: Duration = Duration(serverConfig.remoteTimeout)
   def isEnabledForPath(path: AbsolutePath): Boolean =
     userConfig().remoteLanguageServer.isDefined &&
@@ -75,7 +76,7 @@ final case class RemoteLanguageServer(
 
   private def blockingRequest[T](fn: String => Option[T]): Future[Option[T]] = {
     userConfig().remoteLanguageServer match {
-      case Some(url) => Future(concurrent.blocking(fn(url)))
+      case Some(url) => Future(fn(url))(threads.remoteLanguageServer)
       case None => Future.successful(None)
     }
   }

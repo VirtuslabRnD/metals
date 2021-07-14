@@ -44,7 +44,7 @@ final case class SyntheticsDecorationProvider(
     clientConfig: ClientConfiguration,
     userConfig: () => UserConfiguration,
     trees: Trees
-)(implicit ec: ExecutionContext) {
+)(ec: ExecutionContext) {
 
   private object Document {
     /* We update it with each compilation in order not read the same file on
@@ -72,7 +72,7 @@ final case class SyntheticsDecorationProvider(
       val textDocument = currentDocument(path)
       textDocument match {
         case Some(doc) =>
-          Future(publishSyntheticDecorations(path, doc))
+          Future(publishSyntheticDecorations(path, doc))(ec)
         case _ =>
           Future.successful(())
       }

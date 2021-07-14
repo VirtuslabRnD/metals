@@ -95,6 +95,7 @@ class MetalsLanguageServer(
     sh: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor(),
     isReliableFileWatcher: Boolean = true
 ) extends Cancelable {
+  private val threads = scala.meta.ls.MetalsThreads(ec)
   private val cancelables = new MutableCancelable()
   val isCancelled = new AtomicBoolean(false)
   override def cancel(): Unit = {
@@ -141,7 +142,7 @@ class MetalsLanguageServer(
       )
     }
 
-  private implicit val executionContext: ExecutionContextExecutorService = ec
+  private val executionContext: ExecutionContextExecutorService = ec
 
   private val fingerprints = new MutableMd5Fingerprints
   private val mtags = new Mtags
@@ -170,7 +171,7 @@ class MetalsLanguageServer(
   val buildTargets: BuildTargets =
     BuildTargets.withAmmonite(() => workspace, Some(tables), () => ammonite)
   buildTargets.addData(mainBuildTargetsData)
-  private val buildTargetClasses = new BuildTargetClasses(buildTargets)
+  private val buildTargetClasses = new BuildTargetClasses(buildTargets, threads)
 
   private val scalaVersionSelector = ScalaVersionSelector(
     () => userConfig,
@@ -181,7 +182,8 @@ class MetalsLanguageServer(
     () => userConfig,
     initialConfig,
     buffers,
-    buildTargets
+    buildTargets,
+    threads
   )
   val compilations: Compilations = new Compilations(
     buildTargets,
@@ -189,7 +191,8 @@ class MetalsLanguageServer(
     () => workspace,
     languageClient,
     buildTarget => focusedDocumentBuildTarget.get() == buildTarget,
-    worksheets => onWorksheetChanged(worksheets)
+    worksheets => onWorksheetChanged(worksheets),
+    threads
   )
   private val fileWatcher = register(
     new FileWatcher(
@@ -199,24 +202,25 @@ class MetalsLanguageServer(
   )
   private val indexingPromise: Promise[Unit] = Promise[Unit]()
   private val buildServerPromise: Promise[Unit] = Promise[Unit]()
-  val parseTrees = new BatchedFunction[AbsolutePath, Unit](paths =>
+  val parseTrees = new BatchedFunction[AbsolutePath, Unit]({ paths =>
+    implicit def ec0 = threads.dummyEc
     CancelableFuture(
       buildServerPromise.future
         .flatMap(_ => parseTreesAndPublishDiags(paths))
         .ignoreValue,
       Cancelable.empty
     )
-  )
+  })(threads.dummyBatchedFunctionEc)
   private val onBuildChanged =
     BatchedFunction.fromFuture[AbsolutePath, BuildChange](
       onBuildChangedUnbatched
-    )
+    )(threads.dummyBatchedFunctionEc, implicitly)
   val pauseables: Pauseable = Pauseable.fromPausables(
     onBuildChanged ::
       parseTrees ::
       compilations.pauseables
   )
-  private val timerProvider = TimerProvider(time)
+  private val timerProvider = TimerProvider(time, threads)
   private val trees = new Trees(buildTargets, buffers, scalaVersionSelector)
 
   private val supportsHierarchicalDocumentSymbols = new AtomicBoolean(true)
@@ -236,12 +240,13 @@ class MetalsLanguageServer(
     languageClient,
     time,
     progressTicks,
-    clientConfig
+    clientConfig,
+    threads
   )
 
   // These can't be instantiated until we know the workspace root directory.
   private val shellRunner = register(
-    new ShellRunner(languageClient, () => userConfig, time, statusBar)
+    new ShellRunner(languageClient, () => userConfig, time, statusBar, threads)
   )
   private val diagnostics = new Diagnostics(
     buffers,
@@ -299,7 +304,8 @@ class MetalsLanguageServer(
       excludedPackageHandler.isExcludedPackage,
       scalaVersionSelector,
       trees,
-      sourceMapper
+      sourceMapper,
+      threads
     )
   )
 
@@ -327,7 +333,8 @@ class MetalsLanguageServer(
     languageClient,
     buildTools,
     tables,
-    shellRunner
+    shellRunner,
+    threads
   )
   private val warnings = Warnings(
     () => workspace,
@@ -341,7 +348,8 @@ class MetalsLanguageServer(
     () => workspace,
     languageClient,
     buildTools,
-    shellRunner
+    shellRunner,
+    threads
   )
   private val semanticdbs = AggregateSemanticdbs(
     List(
@@ -369,11 +377,13 @@ class MetalsLanguageServer(
       val ammoniteBuildChanged =
         params.getChanges.asScala.exists(_.getTarget.getUri.isAmmoniteScript)
       if (ammoniteBuildChanged)
-        ammonite.importBuild().onComplete {
-          case Success(()) =>
-          case Failure(exception) =>
-            scribe.error("Error re-importing Ammonite build", exception)
-        }
+        ammonite
+          .importBuild()
+          .onComplete({
+            case Success(()) =>
+            case Failure(exception) =>
+              scribe.error("Error re-importing Ammonite build", exception)
+          })(threads.dummyEc)
       ammoniteBuildChanged
     }
   )
@@ -381,8 +391,9 @@ class MetalsLanguageServer(
     buildClient,
     languageClient,
     tables,
-    () => clientConfig.initialConfig
-  )
+    () => clientConfig.initialConfig,
+    threads
+  )(ec)
   private val bspServers = BspServers(
     () => workspace,
     charset,
@@ -390,8 +401,9 @@ class MetalsLanguageServer(
     buildClient,
     tables,
     bspGlobalDirectories,
-    () => clientConfig.initialConfig
-  )
+    () => clientConfig.initialConfig,
+    threads
+  )(ec)
   private val bspConnector = BspConnector(
     bloopServers,
     bspServers,
@@ -400,7 +412,7 @@ class MetalsLanguageServer(
     tables,
     () => userConfig,
     statusBar
-  )
+  )(ec)
   private val definitionProvider = DefinitionProvider(
     () => workspace,
     mtags,
@@ -413,7 +425,7 @@ class MetalsLanguageServer(
     trees,
     buildTargets,
     scalaVersionSelector
-  )
+  )(ec)
   private val implementationProvider = new ImplementationProvider(
     semanticdbs,
     () => workspace,
@@ -442,12 +454,12 @@ class MetalsLanguageServer(
     compilations,
     clientConfig,
     trees
-  )
+  )(ec)
   private val supermethods = Supermethods(
     languageClient,
     definitionProvider,
     implementationProvider
-  )
+  )(ec)
   private val documentHighlightProvider = DocumentHighlightProvider(
     definitionProvider,
     semanticdbs
@@ -462,14 +474,14 @@ class MetalsLanguageServer(
     () => clientConfig.icons,
     tables,
     buildTargets
-  )
+  )(ec)
   private val packageProvider = PackageProvider(buildTargets)
   private val newFileProvider = NewFileProvider(
     () => workspace,
     languageClient,
     packageProvider,
     () => focusedDocument
-  )
+  )(ec)
   private val scalafixProvider = new ScalafixProvider(
     buffers,
     () => userConfig,
@@ -479,7 +491,7 @@ class MetalsLanguageServer(
     languageClient,
     buildTargets,
     buildClient
-  )
+  )(ec)
   private val workspaceReload = WorkspaceReload(
     () => workspace,
     languageClient,
@@ -488,7 +500,7 @@ class MetalsLanguageServer(
   private val buildToolSelector = BuildToolSelector(
     languageClient,
     tables
-  )
+  )(ec)
   private val codeActionProvider = CodeActionProvider(
     compilers,
     buffers,
@@ -497,7 +509,7 @@ class MetalsLanguageServer(
     trees,
     diagnostics,
     languageClient
-  )
+  )(ec)
 
   def loadedPresentationCompilerCount(): Int =
     compilers.loadedPresentationCompilerCount()
@@ -526,7 +538,7 @@ class MetalsLanguageServer(
         compilers,
         compilations,
         scalaVersionSelector
-      )
+      )(ec)
     )
   }
 
@@ -558,14 +570,14 @@ class MetalsLanguageServer(
     clientConfig,
     () => userConfig,
     trees
-  )
+  )(ec)
   private val newProjectProvider = new NewProjectProvider(
     languageClient,
     statusBar,
     clientConfig,
     shellRunner,
     () => workspace
-  )
+  )(ec)
   private val semanticDBIndexer = SemanticdbIndexer(
     referencesProvider,
     implementationProvider,
@@ -584,7 +596,7 @@ class MetalsLanguageServer(
     tables,
     clientConfig,
     hasProblems
-  )
+  )(ec)
 
   val ammonite: Ammonite = register(
     new Ammonite(
@@ -604,8 +616,9 @@ class MetalsLanguageServer(
       buildTargets,
       buildTools,
       () => clientConfig.initialConfig,
-      scalaVersionSelector
-    )
+      scalaVersionSelector,
+      threads
+    )(ec)
   )
 
   private val indexer = scala.meta.ls.Indexer(
@@ -687,6 +700,7 @@ class MetalsLanguageServer(
   private def parseTreesAndPublishDiags(
       paths: Seq[AbsolutePath]
   ): Future[Seq[Unit]] = {
+    implicit val ec0 = ec
     Future.traverse(paths.distinct) { path =>
       if (path.isScalaFilename) {
         Future(diagnostics.onSyntaxError(path, trees.didChange(path)))
@@ -797,12 +811,12 @@ class MetalsLanguageServer(
       params: InitializeParams
   ): CompletableFuture[InitializeResult] = {
     timerProvider
-      .timed("initialize")(Future {
+      .timed("initialize")(Future({
         initializeParams = Option(params)
         updateWorkspaceDirectory(params)
         val serverInfo = new ServerInfo("Metals", BuildInfo.metalsVersion)
         new InitializeResult(serverCapabilities(), serverInfo)
-      })
+      })(ec))
       .asJava
   }
 
@@ -918,7 +932,7 @@ class MetalsLanguageServer(
         time,
         sh,
         clientConfig
-      )
+      )(ec)
       render = () => newClient.renderHtml
       completeCommand = e => newClient.completeCommand(e)
       languageClient.underlying = newClient
@@ -933,31 +947,34 @@ class MetalsLanguageServer(
     // for https://github.com/natebosch/vim-lsc/issues/113 to get fixed,
     // we may have users on a fixed vim-lsc version but with -Dmetals.no-initialized=true
     // enabled.
-    if (isInitialized.compareAndSet(false, true)) {
-      statusBar.start(sh, 0, 1, TimeUnit.SECONDS)
-      tables.connect()
-      registerNiceToHaveFilePatterns()
-      val result = Future
-        .sequence(
-          List[Future[Unit]](
-            buildServerManager.quickConnectToBuildServer().ignoreValue,
-            buildServerManager
-              .slowConnectToBuildServer(forceImport = false)
-              .ignoreValue,
-            Future(workspaceSymbols.indexClasspath()),
-            Future(startHttpServer()),
-            Future(formattingProvider.load())
+    implicit val ec0 = ec
+    val f =
+      if (isInitialized.compareAndSet(false, true)) {
+        statusBar.start(sh, 0, 1, TimeUnit.SECONDS)
+        tables.connect()
+        registerNiceToHaveFilePatterns()
+        val result = Future
+          .sequence(
+            List[Future[Unit]](
+              buildServerManager.quickConnectToBuildServer().ignoreValue,
+              buildServerManager
+                .slowConnectToBuildServer(forceImport = false)
+                .ignoreValue,
+              Future(workspaceSymbols.indexClasspath()),
+              Future(startHttpServer()),
+              Future(formattingProvider.load())
+            )
           )
-        )
-        .ignoreValue
-      result
-    } else {
-      scribe.warn("Ignoring duplicate 'initialized' notification.")
-      Future.successful(())
-    }
-  }.recover { case NonFatal(e) =>
-    scribe.error("Unexpected error initializing server", e)
-  }.asJava
+          .ignoreValue
+        result
+      } else {
+        scribe.warn("Ignoring duplicate 'initialized' notification.")
+        Future.successful(())
+      }
+    f.recover { case NonFatal(e) =>
+      scribe.error("Unexpected error initializing server", e)
+    }.asJava
+  }
 
   lazy val shutdownPromise = new AtomicReference[Promise[Unit]](null)
   @JsonRequest("shutdown")
@@ -1067,6 +1084,7 @@ class MetalsLanguageServer(
         val path = params.getTextDocument.getUri.toAbsolutePath
         buffers.put(path, change.getText)
         diagnostics.didChange(path)
+        implicit val ec0 = ec
         parseTrees(path)
           .flatMap { _ => syntheticsDecorator.publishSynthetics(path) }
           .ignoreValue
@@ -1091,6 +1109,7 @@ class MetalsLanguageServer(
     savedFiles.add(path)
     // read file from disk, we only remove files from buffers on didClose.
     buffers.put(path, path.toInput.text)
+    implicit val ec0 = ec
     Future
       .sequence(
         List(
@@ -1165,16 +1184,16 @@ class MetalsLanguageServer(
       event: DirectoryChangeEvent
   ): CompletableFuture[Unit] = {
     if (event.eventType() == EventType.OVERFLOW && event.path() == null) {
-      Future {
+      Future(
         semanticDBIndexer.onOverflow()
-      }.asJava
+      )(ec).asJava
     } else {
       val path = AbsolutePath(event.path())
       val isScalaOrJava = path.isScalaOrJava
       if (isScalaOrJava && event.eventType() == EventType.DELETE) {
-        Future {
+        Future(
           diagnostics.didDelete(path)
-        }.asJava
+        )(ec).asJava
       } else if (
         isScalaOrJava && !savedFiles.isRecentlyActive(path) && !buffers
           .contains(path)
@@ -1186,7 +1205,7 @@ class MetalsLanguageServer(
         }
         onChange(List(path)).asJava
       } else if (path.isSemanticdb) {
-        Future {
+        Future(
           event.eventType() match {
             case EventType.DELETE =>
               semanticDBIndexer.onDelete(event.path())
@@ -1195,9 +1214,9 @@ class MetalsLanguageServer(
             case EventType.OVERFLOW =>
               semanticDBIndexer.onOverflow(event.path())
           }
-        }.asJava
+        )(ec).asJava
       } else if (path.isBuild) {
-        onBuildChanged(List(path)).ignoreValue.asJava
+        onBuildChanged(List(path)).ignoreValue(ec).asJava
       } else {
         CompletableFuture.completedFuture(())
       }
@@ -1208,6 +1227,7 @@ class MetalsLanguageServer(
     paths.foreach { path =>
       fingerprints.add(path, FileIO.slurp(path, charset))
     }
+    implicit val ec0 = ec
     Future
       .sequence(
         List(
@@ -1250,19 +1270,18 @@ class MetalsLanguageServer(
   @JsonRequest("textDocument/typeDefinition")
   def typeDefinition(
       position: TextDocumentPositionParams
-  ): CompletableFuture[util.List[Location]] =
-    CancelTokens { _ =>
-      scribe.warn("textDocument/typeDefinition is not supported.")
-      null
-    }
+  ): CompletableFuture[util.List[Location]] = {
+    scribe.warn("textDocument/typeDefinition is not supported.")
+    CompletableFuture.completedFuture[util.List[Location]](null)
+  }
 
   @JsonRequest("textDocument/implementation")
   def implementation(
       position: TextDocumentPositionParams
   ): CompletableFuture[util.List[Location]] =
-    CancelTokens { _ =>
-      implementationProvider.implementations(position).asJava
-    }
+    CancelTokens.future({ _ =>
+      Future(implementationProvider.implementations(position).asJava)(ec)
+    })(ec)
 
   private val textDocumentHoverHandler = TextDocumentHoverHandler(
     compilers,
@@ -1279,7 +1298,9 @@ class MetalsLanguageServer(
   def documentHighlights(
       params: TextDocumentPositionParams
   ): CompletableFuture[util.List[DocumentHighlight]] =
-    CancelTokens { _ => documentHighlightProvider.documentHighlight(params) }
+    CancelTokens.future({ _ =>
+      Future(documentHighlightProvider.documentHighlight(params))(ec)
+    })(ec)
 
   @JsonRequest("textDocument/documentSymbol")
   def documentSymbol(
@@ -1287,52 +1308,56 @@ class MetalsLanguageServer(
   ): CompletableFuture[
     JEither[util.List[DocumentSymbol], util.List[SymbolInformation]]
   ] =
-    CancelTokens { _ =>
-      documentSymbolProvider
-        .documentSymbols(params.getTextDocument().getUri().toAbsolutePath)
-        .asJava
-    }
+    CancelTokens.future({ _ =>
+      Future {
+        documentSymbolProvider
+          .documentSymbols(params.getTextDocument().getUri().toAbsolutePath)
+          .asJava
+      }(ec)
+    })(ec)
 
   @JsonRequest("textDocument/formatting")
   def formatting(
       params: DocumentFormattingParams
   ): CompletableFuture[util.List[TextEdit]] =
-    CancelTokens.future { token =>
+    CancelTokens.future({ token =>
       formattingProvider.format(
         params.getTextDocument.getUri.toAbsolutePath,
         token
       )
-    }
+    })(ec)
 
   @JsonRequest("textDocument/onTypeFormatting")
   def onTypeFormatting(
       params: DocumentOnTypeFormattingParams
   ): CompletableFuture[util.List[TextEdit]] =
-    CancelTokens { _ =>
-      multilineStringFormattingProvider.format(params).asJava
-    }
+    CancelTokens.future({ _ =>
+      Future(multilineStringFormattingProvider.format(params).asJava)(ec)
+    })(ec)
 
   @JsonRequest("textDocument/rangeFormatting")
   def rangeFormatting(
       params: DocumentRangeFormattingParams
   ): CompletableFuture[util.List[TextEdit]] =
-    CancelTokens { _ =>
-      multilineStringFormattingProvider.format(params).asJava
-    }
+    CancelTokens.future({ _ =>
+      Future(multilineStringFormattingProvider.format(params).asJava)(ec)
+    })(ec)
 
   @JsonRequest("textDocument/prepareRename")
   def prepareRename(
       params: TextDocumentPositionParams
-  ): CompletableFuture[l.Range] =
+  ): CompletableFuture[l.Range] = {
+    implicit val ec0 = ec
     CancelTokens.future { token =>
       renameProvider.prepareRename(params, token).map(_.orNull)
-    }
+    }(ec)
+  }
 
   @JsonRequest("textDocument/rename")
   def rename(
       params: RenameParams
   ): CompletableFuture[WorkspaceEdit] =
-    CancelTokens.future { token => renameProvider.rename(params, token) }
+    CancelTokens.future({ token => renameProvider.rename(params, token) })(ec)
 
   @JsonRequest("textDocument/references")
   def references(
@@ -1342,70 +1367,75 @@ class MetalsLanguageServer(
 
   @JsonRequest("textDocument/completion")
   def completion(params: CompletionParams): CompletableFuture[CompletionList] =
-    CancelTokens.future { token => compilers.completions(params, token) }
+    CancelTokens.future({ token => compilers.completions(params, token) })(ec)
 
   @JsonRequest("completionItem/resolve")
   def completionItemResolve(
       item: CompletionItem
   ): CompletableFuture[CompletionItem] =
-    CancelTokens.future { token =>
+    CancelTokens.future({ token =>
       if (clientConfig.isCompletionItemResolve) {
         compilers.completionItemResolve(item, token)
       } else {
         Future.successful(item)
       }
-    }
+    })(ec)
 
   @JsonRequest("textDocument/signatureHelp")
   def signatureHelp(
       params: TextDocumentPositionParams
   ): CompletableFuture[SignatureHelp] =
-    CancelTokens.future { token =>
+    CancelTokens.future({ token =>
       compilers.signatureHelp(params, token)
-    }
+    })(ec)
 
   @JsonRequest("textDocument/codeAction")
   def codeAction(
       params: CodeActionParams
-  ): CompletableFuture[util.List[l.CodeAction]] =
+  ): CompletableFuture[util.List[l.CodeAction]] = {
     CancelTokens.future { token =>
+      implicit val ec0 = ec
       codeActionProvider.codeActions(params, token).map(_.asJava)
-    }
+    }(ec)
+  }
 
   @JsonRequest("textDocument/codeLens")
   def codeLens(
       params: CodeLensParams
   ): CompletableFuture[util.List[CodeLens]] =
-    CancelTokens { _ =>
-      timerProvider.timedThunk(
-        "code lens generation",
-        thresholdMillis = 1.second.toMillis
-      ) {
-        val path = params.getTextDocument.getUri.toAbsolutePath
-        codeLensProvider.findLenses(path).toList.asJava
-      }
-    }
+    CancelTokens.future({ _ =>
+      Future {
+        timerProvider.timedThunk(
+          "code lens generation",
+          thresholdMillis = 1.second.toMillis
+        ) {
+          val path = params.getTextDocument.getUri.toAbsolutePath
+          codeLensProvider.findLenses(path).toList.asJava
+        }
+      }(ec)
+    })(ec)
 
   @JsonRequest("textDocument/foldingRange")
   def foldingRange(
       params: FoldingRangeRequestParams
   ): CompletableFuture[util.List[FoldingRange]] = {
     CancelTokens.future { token =>
+      implicit val ec0 = ec
       parseTrees.currentFuture.map(_ =>
         foldingRangeProvider.getRangedFor(
           params.getTextDocument().getUri().toAbsolutePath
         )
       )
-    }
+    }(ec)
   }
 
   @JsonRequest("textDocument/selectionRange")
   def selectionRange(
       params: SelectionRangeParams
   ): CompletableFuture[util.List[SelectionRange]] = {
-    CancelTokens.future { token =>
+    CancelTokens.future({ token =>
       compilers.selectionRange(params, token)
-    }
+    })(ec)
   }
 
   private val workspaceSymbolHandler = WorkspaceSymbolHandler(
@@ -1469,7 +1499,7 @@ class MetalsLanguageServer(
   ): CompletableFuture[MetalsTreeViewChildrenResult] = {
     Future {
       treeView.children(params)
-    }.asJava
+    }(threads.treeViewEc).asJava
   }
 
   @JsonRequest("metals/treeViewParent")
@@ -1478,29 +1508,31 @@ class MetalsLanguageServer(
   ): CompletableFuture[TreeViewParentResult] = {
     Future {
       treeView.parent(params)
-    }.asJava
+    }(threads.treeViewEc).asJava
   }
 
   @JsonNotification("metals/treeViewVisibilityDidChange")
   def treeViewVisibilityDidChange(
       params: TreeViewVisibilityDidChangeParams
-  ): CompletableFuture[Unit] =
+  ): CompletableFuture[Unit] = {
     Future {
       treeView.onVisibilityDidChange(params)
-    }.asJava
+    }(threads.treeViewEc).asJava
+  }
 
   @JsonNotification("metals/treeViewNodeCollapseDidChange")
   def treeViewNodeCollapseDidChange(
       params: TreeViewNodeCollapseDidChangeParams
-  ): CompletableFuture[Unit] =
+  ): CompletableFuture[Unit] = {
     Future {
       treeView.onCollapseDidChange(params)
-    }.asJava
+    }(threads.treeViewEc).asJava
+  }
 
   @JsonRequest("metals/treeViewReveal")
   def treeViewReveal(
       params: TextDocumentPositionParams
-  ): CompletableFuture[TreeViewNodeRevealResult] =
+  ): CompletableFuture[TreeViewNodeRevealResult] = {
     Future {
       treeView
         .reveal(
@@ -1508,7 +1540,8 @@ class MetalsLanguageServer(
           params.getPosition()
         )
         .orNull
-    }.asJava
+    }(threads.treeViewEc).asJava
+  }
 
   private def onWorksheetChanged(
       paths: Seq[AbsolutePath]

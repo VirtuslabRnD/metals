@@ -17,7 +17,7 @@ class BatchedFunctionSuite extends BaseSuite {
           numbers.mkString
         }
       }
-    })
+    })(ec, implicitly)
     val results = lock.synchronized {
       List(
         // First request instantly acquires lock and runs solo
@@ -50,7 +50,7 @@ class BatchedFunctionSuite extends BaseSuite {
       Future.successful {
         numbers.mkString
       }
-    }
+    }(ec, implicitly)
 
     val unpaused = mkString(List("a"))
     assertDiffEqual(unpaused.value, Some(Success("a")))
