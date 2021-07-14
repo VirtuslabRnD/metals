@@ -646,8 +646,15 @@ class MetalsLanguageServer(
     timerProvider,
     scalafixProvider,
     indexingPromise,
-    ammonite,
-    () => buildServerManager.lastImportedBuilds,
+    () =>
+      Seq(
+        (
+          "main",
+          mainBuildTargetsData,
+          ImportedBuild.fromList(buildServerManager.lastImportedBuilds)
+        ),
+        ("ammonite", ammonite.buildTargetsData, ammonite.lastImportedBuild)
+      ),
     clientConfig,
     definitionIndex,
     referencesProvider,
