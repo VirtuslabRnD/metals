@@ -563,7 +563,7 @@ class Compilers(
     newCompiler(scalac, target, classpath, search)
   }
 
-  def newCompiler(
+  private def newCompiler(
       scalac: ScalacOptionsItem,
       target: ScalaTarget,
       classpath: Seq[Path],
@@ -578,7 +578,7 @@ class Compilers(
     )
   }
 
-  def newCompiler(
+  private def newCompiler(
       scalaVersion: String,
       options: Seq[String],
       classpath: Seq[Path],
