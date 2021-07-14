@@ -84,6 +84,7 @@ import org.eclipse.lsp4j.jsonrpc.services.JsonNotification
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest
 import org.eclipse.{lsp4j => l}
 import scala.meta.ls.handlers.DidOpenHandler
+import scala.meta.ls.handlers.MetalsDidFocusTextDocumentHandler
 
 class MetalsLanguageServer(
     ec: ExecutionContextExecutorService,
@@ -971,80 +972,25 @@ class MetalsLanguageServer(
   def didOpen(params: DidOpenTextDocumentParams): CompletableFuture[Unit] =
     didOpenHandler(params)
 
+  private val metalsDidFocusTextDocumentHandler =
+    MetalsDidFocusTextDocumentHandler(
+      path => { focusedDocument = Some(path) },
+      buildTargets,
+      focusedDocumentBuildTarget,
+      interactiveSemanticdbs,
+      () => workspace,
+      openedFiles,
+      syntheticsDecorator,
+      worksheetProvider,
+      compilations,
+      executionContext
+    )
+
   @JsonNotification("metals/didFocusTextDocument")
   def didFocus(
       params: AnyRef
-  ): CompletableFuture[DidFocusResult.Value] = {
-
-    val uriOpt: Option[String] = params match {
-      case string: String =>
-        Option(string)
-      case (h: String) :: Nil =>
-        Option(h)
-      case _ =>
-        scribe.warn(
-          s"Unexpected notification params received for didFocusTextDocument: $params"
-        )
-        None
-    }
-
-    uriOpt match {
-      case Some(uri) => {
-        val path = uri.toAbsolutePath
-        focusedDocument = Some(path)
-        buildTargets
-          .inverseSources(path)
-          .foreach(focusedDocumentBuildTarget.set)
-
-        // unpublish diagnostic for dependencies
-        interactiveSemanticdbs.didFocus(path)
-        // Don't trigger compilation on didFocus events under cascade compilation
-        // because save events already trigger compile in inverse dependencies.
-        if (path.isDependencySource(workspace)) {
-          CompletableFuture.completedFuture(DidFocusResult.NoBuildTarget)
-        } else if (openedFiles.isRecentlyActive(path)) {
-          CompletableFuture.completedFuture(DidFocusResult.RecentlyActive)
-        } else {
-          syntheticsDecorator.publishSynthetics(path)
-          worksheetProvider.onDidFocus(path)
-          buildTargets.inverseSources(path) match {
-            case Some(target) =>
-              val isAffectedByCurrentCompilation =
-                path.isWorksheet ||
-                  buildTargets.isInverseDependency(
-                    target,
-                    compilations.currentlyCompiling.toList
-                  )
-
-              def isAffectedByLastCompilation: Boolean =
-                !compilations.wasPreviouslyCompiled(target) &&
-                  buildTargets.isInverseDependency(
-                    target,
-                    compilations.previouslyCompiled.toList
-                  )
-
-              val needsCompile =
-                isAffectedByCurrentCompilation || isAffectedByLastCompilation
-              if (needsCompile) {
-                compilations
-                  .compileFile(path)
-                  .map(_ => DidFocusResult.Compiled)
-                  .asJava
-              } else {
-                CompletableFuture.completedFuture(
-                  DidFocusResult.AlreadyCompiled
-                )
-              }
-            case None =>
-              CompletableFuture.completedFuture(DidFocusResult.NoBuildTarget)
-          }
-        }
-      }
-      case None =>
-        CompletableFuture.completedFuture(DidFocusResult.NoBuildTarget)
-    }
-
-  }
+  ): CompletableFuture[DidFocusResult.Value] =
+    metalsDidFocusTextDocumentHandler(params)
 
   @JsonNotification("metals/windowStateDidChange")
   def windowStateDidChange(params: WindowStateDidChangeParams): Unit = {
