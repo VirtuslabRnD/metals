@@ -14,6 +14,7 @@ import scala.meta.internal.metals.MetalsServerConfig
 import scala.meta.internal.metals.ScalaVersions
 
 import org.eclipse.lsp4j.jsonrpc.Launcher
+import scala.meta.internal.metals.ThreadPools
 
 object Main {
   def main(args: Array[String]): Unit = {
@@ -47,13 +48,17 @@ object Main {
     val systemOut = System.out
     val tracePrinter = GlobalTrace.setup("LSP")
     val exec = Executors.newCachedThreadPool()
+    val sh = Executors.newSingleThreadScheduledExecutor()
+    ThreadPools.discardRejectedRunnables("MetalsLanguageServer.ec", exec)
+    ThreadPools.discardRejectedRunnables("MetalsLanguageServer.sh", sh)
     val ec = ExecutionContext.fromExecutorService(exec)
     val initialConfig = MetalsServerConfig.default
     val server = new MetalsLanguageServer(
       ec,
       redirectSystemOut = true,
       charset = StandardCharsets.UTF_8,
-      initialConfig = initialConfig
+      initialConfig = initialConfig,
+      sh = sh
     )
     try {
       scribe.info(s"Starting Metals server with configuration: $initialConfig")

@@ -93,8 +93,6 @@ class MetalsLanguageServer(
     sh: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor(),
     isReliableFileWatcher: Boolean = true
 ) extends Cancelable {
-  ThreadPools.discardRejectedRunnables("MetalsLanguageServer.sh", sh)
-  ThreadPools.discardRejectedRunnables("MetalsLanguageServer.ec", ec)
   private val cancelables = new MutableCancelable()
   val isCancelled = new AtomicBoolean(false)
   override def cancel(): Unit = {
