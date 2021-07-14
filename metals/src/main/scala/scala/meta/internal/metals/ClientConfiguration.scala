@@ -13,7 +13,7 @@ import scala.meta.internal.metals.config.StatusBarState
  * @param experimentalCapabilities clientExperimentalCapabilities
  * @param initializationOptions initializationOptions
  */
-class ClientConfiguration(
+final case class ClientConfiguration(
     var initialConfig: MetalsServerConfig,
     var experimentalCapabilities: ClientExperimentalCapabilities,
     var initializationOptions: InitializationOptions
@@ -154,7 +154,7 @@ class ClientConfiguration(
 
 object ClientConfiguration {
   def Default() =
-    new ClientConfiguration(
+    ClientConfiguration(
       MetalsServerConfig(),
       ClientExperimentalCapabilities.Default,
       InitializationOptions.Default

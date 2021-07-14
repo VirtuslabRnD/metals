@@ -28,7 +28,7 @@ import org.eclipse.{lsp4j => l}
  * with what build target (to determine classpath and compiler options).
  */
 final class InteractiveSemanticdbs(
-    workspace: AbsolutePath,
+    workspace: () => AbsolutePath,
     buildTargets: BuildTargets,
     charset: Charset,
     client: MetalsLanguageClient,
@@ -64,9 +64,9 @@ final class InteractiveSemanticdbs(
 
     def doesNotBelongToBuildTarget = buildTargets.inverseSources(source).isEmpty
     def shouldTryCalculateInteractiveSemanticdb = {
-      source.isLocalFileSystem(workspace) && (
+      source.isLocalFileSystem(workspace()) && (
         unsavedContents.isDefined ||
-          source.isInReadonlyDirectory(workspace) || // dependencies
+          source.isInReadonlyDirectory(workspace()) || // dependencies
           source.isSbt || // sbt files
           source.isWorksheet || // worksheets
           doesNotBelongToBuildTarget // standalone files
@@ -87,7 +87,7 @@ final class InteractiveSemanticdbs(
           if (existingDoc == null || existingDoc.md5 != sha) {
             val compiled = compile(path, text)
             Option(compiled).foreach(doc =>
-              if (!source.isDependencySource(workspace))
+              if (!source.isDependencySource(workspace()))
                 semanticdbIndexer().onChange(source, doc)
             )
             compiled
@@ -105,7 +105,7 @@ final class InteractiveSemanticdbs(
   def didDefinition(source: AbsolutePath, result: DefinitionResult): Unit = {
     for {
       destination <- result.definition
-      if destination.isDependencySource(workspace)
+      if destination.isDependencySource(workspace())
       buildTarget = buildTargets.inverseSources(source)
     } {
       if (source.isWorksheet) {
@@ -128,7 +128,7 @@ final class InteractiveSemanticdbs(
         new PublishDiagnosticsParams(uri, Collections.emptyList())
       )
     }
-    if (path.isDependencySource(workspace)) {
+    if (path.isDependencySource(workspace())) {
       textDocument(path).toOption.foreach { doc =>
         val uri = path.toURI.toString()
         activeDocument.set(Some(uri))

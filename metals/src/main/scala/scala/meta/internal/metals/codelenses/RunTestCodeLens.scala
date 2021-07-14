@@ -31,7 +31,7 @@ import org.eclipse.{lsp4j => l}
  * see if the build server is a DAP provider, and then generate these based
  * off that.
  */
-final class RunTestCodeLens(
+final case class RunTestCodeLens(
     buildTargetClasses: BuildTargetClasses,
     buffers: Buffers,
     buildTargets: BuildTargets,

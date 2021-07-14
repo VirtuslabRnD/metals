@@ -39,13 +39,13 @@ import org.scalafmt.interfaces.ScalafmtReporter
  * Implement text formatting using Scalafmt
  */
 final class FormattingProvider(
-    workspace: AbsolutePath,
+    workspace: () => AbsolutePath,
     buffers: Buffers,
     userConfig: () => UserConfiguration,
     client: MetalsLanguageClient,
     clientConfig: ClientConfiguration,
     statusBar: StatusBar,
-    icons: Icons,
+    icons: () => Icons,
     tables: Tables,
     buildTargets: BuildTargets
 )(implicit ec: ExecutionContext)
@@ -115,7 +115,7 @@ final class FormattingProvider(
       val result = runFormat(path, input)
       if (token.isCancelled) {
         statusBar.addMessage(
-          s"${icons.info}Scalafmt cancelled by editor, try saving file again"
+          s"${icons().info}Scalafmt cancelled by editor, try saving file again"
         )
       }
       reporterPromise.get() match {
@@ -296,7 +296,7 @@ final class FormattingProvider(
 
     if (itemsRequiresUpgrade.nonEmpty) {
       val (items, dialects) = itemsRequiresUpgrade.unzip
-      val directories = items.map(_.toRelative(workspace))
+      val directories = items.map(_.toRelative(workspace()))
 
       val nonSbtTargets = buildTargets.all.toList.filter(!_.isSbt)
       val needFileOverride =
@@ -328,7 +328,8 @@ final class FormattingProvider(
     else {
       Future(inspectDialectRewrite(config)).flatMap {
         case Some(rewrite) =>
-          val canUpdate = rewrite.canUpdate && scalafmtConf.isInside(workspace)
+          val canUpdate =
+            rewrite.canUpdate && scalafmtConf.isInside(workspace())
           val params =
             UpdateScalafmtConf.params(rewrite.maxDialect, canUpdate)
 
@@ -374,7 +375,7 @@ final class FormattingProvider(
 
   private def scalafmtConf: AbsolutePath = {
     val configpath = userConfig().scalafmtConfigPath
-    configpath.getOrElse(workspace.resolve(".scalafmt.conf"))
+    configpath.getOrElse(workspace().resolve(".scalafmt.conf"))
   }
 
   private val activeReporter: ScalafmtReporter = new ScalafmtReporter {
@@ -412,7 +413,7 @@ final class FormattingProvider(
       e match {
         case p: PositionException =>
           statusBar.addMessage(
-            s"${icons.alert}line ${p.startLine() + 1}: ${p.shortMessage()}"
+            s"${icons().alert}line ${p.startLine() + 1}: ${p.shortMessage()}"
           )
           scribe.error(s"scalafmt: ${p.longMessage()}")
         case _ =>

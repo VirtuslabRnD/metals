@@ -12,8 +12,8 @@ import scala.meta.io.AbsolutePath
 
 import org.eclipse.lsp4j.FoldingRange
 
-final class FoldingRangeProvider(
-    val trees: Trees,
+final case class FoldingRangeProvider(
+    trees: Trees,
     buffers: Buffers
 ) {
 

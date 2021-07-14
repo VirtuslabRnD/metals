@@ -13,12 +13,12 @@ import com.google.gson.JsonPrimitive
 import org.eclipse.lsp4j.Location
 import org.eclipse.{lsp4j => l}
 
-class StacktraceAnalyzer(
-    workspace: AbsolutePath,
+final case class StacktraceAnalyzer(
+    workspace: () => AbsolutePath,
     buffers: Buffers,
     definitionProvider: DefinitionProvider,
-    icons: Icons,
-    commandsInHtmlSupported: Boolean
+    icons: () => Icons,
+    commandsInHtmlSupported: () => Boolean
 ) {
 
   def analyzeCommand(
@@ -29,7 +29,7 @@ class StacktraceAnalyzer(
   }
 
   def isStackTraceFile(path: AbsolutePath): Boolean =
-    path == workspace.resolve(Directories.stacktrace)
+    path == workspace().resolve(Directories.stacktrace)
 
   def stacktraceLenses(path: AbsolutePath): Seq[l.CodeLens] = {
     readStacktraceFile(path)
@@ -92,7 +92,7 @@ class StacktraceAnalyzer(
     new l.CodeLens(
       range,
       new l.Command(
-        s"${icons.findsuper} open",
+        s"${icons().findsuper} open",
         ServerCommands.GotoPosition.id,
         List[Object](location: Object, java.lang.Boolean.TRUE).asJava
       ),
@@ -103,10 +103,10 @@ class StacktraceAnalyzer(
   private def analyzeStackTrace(
       stacktrace: String
   ): Option[l.ExecuteCommandParams] = {
-    if (commandsInHtmlSupported) {
+    if (commandsInHtmlSupported()) {
       Some(makeHtmlCommandParams(stacktrace))
     } else {
-      val path = workspace.resolve(Directories.stacktrace)
+      val path = workspace().resolve(Directories.stacktrace)
       val pathFile = path.toFile
       val pathStr = pathFile.toString
 

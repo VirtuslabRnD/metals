@@ -12,7 +12,7 @@ import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.TextEdit
 import org.eclipse.lsp4j.WorkspaceEdit
 
-class PackageProvider(private val buildTargets: BuildTargets) {
+final case class PackageProvider(private val buildTargets: BuildTargets) {
 
   def workspaceEdit(path: AbsolutePath): Option[WorkspaceEdit] = {
     packageStatement(path).map(template =>

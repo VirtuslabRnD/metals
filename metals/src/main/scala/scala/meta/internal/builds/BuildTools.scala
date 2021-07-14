@@ -21,8 +21,8 @@ import scala.meta.io.AbsolutePath
  *                            details according to BSP spec:
  *                            https://build-server-protocol.github.io/docs/server-discovery.html#default-locations-for-bsp-connection-files
  */
-final class BuildTools(
-    workspace: AbsolutePath,
+final case class BuildTools(
+    workspace: () => AbsolutePath,
     bspGlobalDirectories: List[AbsolutePath],
     userConfig: () => UserConfiguration,
     explicitChoiceMade: () => Boolean
@@ -39,10 +39,10 @@ final class BuildTools(
     isBloop || (isBsp && all.isEmpty) || (isBsp && explicitChoiceMade())
   }
   def isBloop: Boolean = {
-    hasJsonFile(workspace.resolve(".bloop"))
+    hasJsonFile(workspace().resolve(".bloop"))
   }
   def isBsp: Boolean = {
-    hasJsonFile(workspace.resolve(".bsp")) ||
+    hasJsonFile(workspace().resolve(".bsp")) ||
     bspGlobalDirectories.exists(hasJsonFile)
   }
   private def hasJsonFile(dir: AbsolutePath): Boolean = {
@@ -50,9 +50,9 @@ final class BuildTools(
   }
   // Returns true if there's a build.sbt file or project/build.properties with sbt.version
   def isSbt: Boolean = {
-    workspace.resolve("build.sbt").isFile || {
+    workspace().resolve("build.sbt").isFile || {
       val buildProperties =
-        workspace.resolve("project").resolve("build.properties")
+        workspace().resolve("project").resolve("build.properties")
       buildProperties.isFile && {
         val props = new Properties()
         val in = Files.newInputStream(buildProperties.toNIO)
@@ -62,14 +62,14 @@ final class BuildTools(
       }
     }
   }
-  def isMill: Boolean = workspace.resolve("build.sc").isFile
+  def isMill: Boolean = workspace().resolve("build.sc").isFile
   def isGradle: Boolean =
-    workspace.resolve("build.gradle").isFile || workspace
+    workspace().resolve("build.gradle").isFile || workspace()
       .resolve("build.gradle.kts")
       .isFile
-  def isMaven: Boolean = workspace.resolve("pom.xml").isFile
-  def isPants: Boolean = workspace.resolve("pants.ini").isFile
-  def isBazel: Boolean = workspace.resolve("WORKSPACE").isFile
+  def isMaven: Boolean = workspace().resolve("pom.xml").isFile
+  def isPants: Boolean = workspace().resolve("pants.ini").isFile
+  def isBazel: Boolean = workspace().resolve("WORKSPACE").isFile
 
   def allAvailable: List[BuildTool] = {
     List(
@@ -99,7 +99,7 @@ final class BuildTools(
   def loadSupported(): List[BuildTool] = {
     val buf = List.newBuilder[BuildTool]
 
-    if (isSbt) buf += SbtBuildTool(workspace, userConfig)
+    if (isSbt) buf += SbtBuildTool(workspace(), userConfig)
     if (isGradle) buf += GradleBuildTool(userConfig)
     if (isMaven) buf += MavenBuildTool(userConfig)
     if (isMill) buf += MillBuildTool(userConfig)
@@ -124,8 +124,8 @@ final class BuildTools(
 
 object BuildTools {
   def default(workspace: AbsolutePath = PathIO.workingDirectory): BuildTools =
-    new BuildTools(
-      workspace,
+    BuildTools(
+      () => workspace,
       Nil,
       () => UserConfiguration(),
       explicitChoiceMade = () => false

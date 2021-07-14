@@ -15,7 +15,7 @@ import scala.meta.internal.semanticdb.SymbolInformation
 
 import org.eclipse.{lsp4j => l}
 
-final class SuperMethodCodeLens(
+final case class SuperMethodCodeLens(
     implementationProvider: ImplementationProvider,
     buffers: Buffers,
     userConfig: () => UserConfiguration,

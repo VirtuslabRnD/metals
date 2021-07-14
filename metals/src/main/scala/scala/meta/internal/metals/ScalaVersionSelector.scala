@@ -5,7 +5,7 @@ import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.semver.SemVer
 import scala.meta.io.AbsolutePath
 
-class ScalaVersionSelector(
+final case class ScalaVersionSelector(
     userConfig: () => UserConfiguration,
     buildTargets: BuildTargets
 ) {

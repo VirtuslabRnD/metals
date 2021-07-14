@@ -23,7 +23,7 @@ abstract class FoldingRangeSuite(
   private val buffers = Buffers()
   private val buildTargets = new BuildTargets(_ => None)
   private val selector =
-    new ScalaVersionSelector(
+    ScalaVersionSelector(
       () => UserConfiguration(fallbackScalaVersion = Some(scalaVersion)),
       buildTargets
     )

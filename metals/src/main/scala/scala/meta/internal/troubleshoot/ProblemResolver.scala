@@ -13,7 +13,7 @@ import scala.meta.internal.semver.SemVer
 import scala.meta.io.AbsolutePath
 
 class ProblemResolver(
-    workspace: AbsolutePath,
+    workspace: () => AbsolutePath,
     currentBuildServer: () => Option[BspSession],
     isClientCommandSupported: Boolean
 ) {
@@ -165,7 +165,7 @@ class ProblemResolver(
       case _
           if !scalaTarget.isSourcerootDeclared && !ScalaVersions
             .isScala3Version(scalaTarget.scalaVersion) =>
-        Some(MissingSourceRoot(workspace.sourcerootOption))
+        Some(MissingSourceRoot(workspace().sourcerootOption))
       case version
           if ScalaVersions.isDeprecatedScalaVersion(
             version

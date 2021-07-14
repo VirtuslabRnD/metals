@@ -14,7 +14,7 @@ import org.eclipse.lsp4j.DocumentHighlight
 import org.eclipse.lsp4j.DocumentHighlightKind
 import org.eclipse.lsp4j.TextDocumentPositionParams
 
-final class DocumentHighlightProvider(
+final case class DocumentHighlightProvider(
     definitionProvider: DefinitionProvider,
     semanticdbs: Semanticdbs
 ) {

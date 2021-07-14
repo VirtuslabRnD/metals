@@ -34,8 +34,8 @@ import scala.meta.tokens.{Token => T}
 import org.eclipse.lsp4j.TextDocumentPositionParams
 import org.eclipse.{lsp4j => l}
 
-final class SyntheticsDecorationProvider(
-    workspace: AbsolutePath,
+final case class SyntheticsDecorationProvider(
+    workspace: () => AbsolutePath,
     semanticdbs: Semanticdbs,
     buffer: Buffers,
     client: DecorationClient,
@@ -250,7 +250,7 @@ final class SyntheticsDecorationProvider(
 
   private def currentDocument(path: AbsolutePath): Option[TextDocument] = {
     Document.currentDocument match {
-      case Some(doc) if workspace.resolve(doc.uri) == path => Some(doc)
+      case Some(doc) if workspace().resolve(doc.uri) == path => Some(doc)
       case _ =>
         val textDocument = semanticdbs
           .textDocument(path)

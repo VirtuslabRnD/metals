@@ -14,7 +14,7 @@ import org.flywaydb.core.Flyway
 import org.flywaydb.core.api.FlywayException
 
 final class Tables(
-    workspace: AbsolutePath,
+    workspace: () => AbsolutePath,
     time: Time,
     clientConfig: ClientConfiguration
 ) extends Cancelable {
@@ -71,21 +71,22 @@ final class Tables(
       persistentConnection(isAutoServer = true)
     } catch {
       case NonFatal(e) =>
+        val ws = workspace()
         scribe.error(
           s"unable to setup persistent H2 database with AUTO_SERVER=false, falling back to in-memory database. " +
             s"This means you may be redundantly asked to execute 'Import build', even if it's not needed. " +
             s"Also, code navigation will not work for existing files in the .metals/readonly/ directory. " +
-            s"To fix this problem, make sure you only have one running Metals server in the directory '$workspace'.",
+            s"To fix this problem, make sure you only have one running Metals server in the directory '$ws'.",
           e
         )
 
-        RecursivelyDelete(workspace.resolve(Directories.readonly))
+        RecursivelyDelete(ws.resolve(Directories.readonly))
         inMemoryConnection()
     }
   }
 
   private def databasePath: AbsolutePath =
-    workspace.resolve(Directories.database)
+    workspace().resolve(Directories.database)
 
   private def inMemoryConnection(): Connection = {
     tryUrl("jdbc:h2:mem:metals;DB_CLOSE_DELAY=-1")
@@ -95,7 +96,7 @@ final class Tables(
     val autoServer =
       if (isAutoServer) ";AUTO_SERVER=TRUE"
       else ""
-    val dbfile = workspace.resolve(".metals").resolve("metals")
+    val dbfile = workspace().resolve(".metals").resolve("metals")
     Files.createDirectories(dbfile.toNIO.getParent)
     System.setProperty(
       "h2.bindAddress",

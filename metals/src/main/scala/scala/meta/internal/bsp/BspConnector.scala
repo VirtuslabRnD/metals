@@ -21,7 +21,7 @@ import ch.epfl.scala.bsp4j.BspConnectionDetails
 import com.google.common.collect.ImmutableList
 import org.eclipse.lsp4j.services.LanguageClient
 
-class BspConnector(
+final case class BspConnector(
     bloopServers: BloopServers,
     bspServers: BspServers,
     buildTools: BuildTools,

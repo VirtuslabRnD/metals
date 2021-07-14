@@ -26,10 +26,10 @@ import scalafix.interfaces.Scalafix
 import scalafix.interfaces.ScalafixEvaluation
 import scalafix.interfaces.ScalafixFileEvaluationError
 
-case class ScalafixProvider(
+class ScalafixProvider(
     buffers: Buffers,
     userConfig: () => UserConfiguration,
-    workspace: AbsolutePath,
+    workspace: () => AbsolutePath,
     embedded: Embedded,
     statusBar: StatusBar,
     compilations: Compilations,
@@ -51,7 +51,7 @@ case class ScalafixProvider(
         val targets = buildTargets.all.toList.groupBy(_.scalaVersion).flatMap {
           case (_, targets) => targets.headOption
         }
-        val tmp = workspace
+        val tmp = workspace()
           .resolve(Directories.tmp)
           .resolve(s"Main${Random.nextLong()}.scala")
         val contents = "object Main{}\n"
@@ -152,8 +152,8 @@ case class ScalafixProvider(
             semanticdb.withDiagnostics(Seq.empty)
           else
             semanticdb
-        val dir = workspace.resolve(Directories.tmp)
-        file.toRelativeInside(workspace).flatMap { relativePath =>
+        val dir = workspace().resolve(Directories.tmp)
+        file.toRelativeInside(workspace()).flatMap { relativePath =>
           val writeTo = dir.resolve(SemanticdbClasspath.fromScala(relativePath))
           writeTo.parent.createDirectories()
           val docs = TextDocuments(Seq(toSave))
@@ -206,7 +206,7 @@ case class ScalafixProvider(
   }
 
   private def scalafixConf: Option[Path] = {
-    val defaultLocation = workspace.resolve(".scalafix.conf")
+    val defaultLocation = workspace().resolve(".scalafix.conf")
     userConfig().scalafixConfigPath match {
       case Some(path) if !path.isFile && defaultLocation.isFile =>
         languageClient.showMessage(
@@ -258,12 +258,12 @@ case class ScalafixProvider(
 
     val sourceroot =
       if (produceSemanticdb)
-        targetRoot.map(AbsolutePath(_)).getOrElse(workspace)
-      else workspace
+        targetRoot.map(AbsolutePath(_)).getOrElse(workspace())
+      else workspace()
 
     val diskFilePath = if (produceSemanticdb) {
       file
-        .toRelativeInside(workspace)
+        .toRelativeInside(workspace())
         .map { relativePath =>
           val tempFilePath = sourceroot.resolve(relativePath)
           tempFilePath.writeText(inBuffers)

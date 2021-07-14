@@ -112,7 +112,7 @@ class ProblemResolverSuite extends FunSuite {
       val workspace = Files.createTempDirectory("metals")
       workspace.toFile().deleteOnExit()
       val problemResolver = new ProblemResolver(
-        AbsolutePath(workspace),
+        () => AbsolutePath(workspace),
         () => None,
         isClientCommandSupported = true
       )

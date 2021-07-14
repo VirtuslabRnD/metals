@@ -12,11 +12,11 @@ import ch.epfl.scala.bsp4j.BuildTargetIdentifier
 /**
  * A helper to construct clear and actionable warning messages.
  */
-final class Warnings(
-    workspace: AbsolutePath,
+final case class Warnings(
+    workspace: () => AbsolutePath,
     buildTargets: BuildTargets,
     statusBar: StatusBar,
-    icons: Icons,
+    icons: () => Icons,
     buildTools: BuildTools,
     isCompiling: BuildTargetIdentifier => Boolean
 ) {
@@ -26,7 +26,7 @@ final class Warnings(
     def buildMisconfiguration(): Unit = {
       statusBar.addMessage(
         MetalsStatusParams(
-          s"${icons.alert}Build misconfiguration",
+          s"${icons().alert}Build misconfiguration",
           command = ClientCommands.RunDoctor.id
         )
       )
@@ -48,12 +48,12 @@ final class Warnings(
               s"To fix this problem, change the Scala version to ${isLatestScalaVersion.mkString(" or ")}."
           )
           statusBar.addMessage(
-            s"${icons.alert}Unsupported Scala ${info.scalaVersion}"
+            s"${icons().alert}Unsupported Scala ${info.scalaVersion}"
           )
         }
       } else {
         if (!info.isSourcerootDeclared) {
-          val option = workspace.sourcerootOption
+          val option = workspace().sourcerootOption
           logger.error(
             s"$doesntWorkBecause the build target ${info.displayName} is missing the compiler option $option. " +
               s"To fix this problems, update the build settings to include this compiler option."
@@ -64,12 +64,14 @@ final class Warnings(
           logger.error(
             s"$doesntWorkBecause the build target ${info.displayName} is being compiled. $tryAgain."
           )
-          statusBar.addMessage(icons.info + tryAgain)
+          statusBar.addMessage(icons().info + tryAgain)
         } else if (!path.isSbt && !path.isWorksheet) {
 
           val targetRoot = scalacOptions.targetroot(info.scalaVersion)
           val targetfile = targetRoot
-            .resolve(SemanticdbClasspath.fromScala(path.toRelative(workspace)))
+            .resolve(
+              SemanticdbClasspath.fromScala(path.toRelative(workspace()))
+            )
           logger.error(
             s"$doesntWorkBecause the SemanticDB file '$targetfile' doesn't exist. " +
               s"There can be many reasons for this error. "
@@ -86,7 +88,7 @@ final class Warnings(
           logger.warn(
             s"$doesntWorkBecause it doesn't belong to a build target."
           )
-          statusBar.addMessage(s"${icons.alert}No build target")
+          statusBar.addMessage(s"${icons().alert}No build target")
         }
     }
   }
@@ -95,7 +97,7 @@ final class Warnings(
     val tools = buildTools.all
     if (tools.isEmpty) {
       scribe.warn(
-        s"no build tool detected in workspace '$workspace'. " +
+        s"no build tool detected in workspace '${workspace()}'. " +
           "The most common cause for this problem is that the editor was opened in the wrong working directory, " +
           "for example if you use sbt then the workspace directory should contain build.sbt. "
       )
@@ -112,7 +114,7 @@ final class Warnings(
     }
     statusBar.addMessage(
       MetalsStatusParams(
-        s"${icons.alert}No build tool",
+        s"${icons().alert}No build tool",
         command = ClientCommands.ToggleLogs.id
       )
     )

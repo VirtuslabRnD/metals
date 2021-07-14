@@ -21,7 +21,7 @@ import org.eclipse.{lsp4j => l}
  * Implements workspace/symbol for both workspace sources and dependency classpath.
  */
 final class WorkspaceSymbolProvider(
-    val workspace: AbsolutePath,
+    val workspace: () => AbsolutePath,
     statistics: StatisticsConfig,
     val buildTargets: BuildTargets,
     val index: GlobalSymbolIndex,
@@ -143,7 +143,7 @@ final class WorkspaceSymbolProvider(
   ): Seq[l.SymbolInformation] = {
     val query = WorkspaceSymbolQuery.fromTextQuery(textQuery)
     val visitor =
-      new WorkspaceSearchVisitor(workspace, query, token, index)
+      new WorkspaceSearchVisitor(workspace(), query, token, index)
     search(query, visitor, None)
     visitor.allResults()
   }

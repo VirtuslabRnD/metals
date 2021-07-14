@@ -32,8 +32,8 @@ import dev.dirs.ProjectDirectories
  *
  * See https://build-server-protocol.github.io/docs/server-discovery.html
  */
-final class BspServers(
-    mainWorkspace: AbsolutePath,
+final case class BspServers(
+    mainWorkspace: () => AbsolutePath,
     charset: Charset,
     client: MetalsLanguageClient,
     buildClient: MetalsBuildClient,
@@ -114,7 +114,7 @@ final class BspServers(
    *  may be a server in the current workspace
    */
   def findAvailableServers(): List[BspConnectionDetails] = {
-    val jsonFiles = findJsonFiles(mainWorkspace)
+    val jsonFiles = findJsonFiles(mainWorkspace())
     val gson = new Gson()
     for {
       candidate <- jsonFiles

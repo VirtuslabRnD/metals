@@ -137,11 +137,19 @@ class MetalsLanguageServer(
     )
   }
 
+  private var workspaceOpt = Option.empty[AbsolutePath]
+
+  private def workspace: AbsolutePath =
+    workspaceOpt.getOrElse {
+      sys.error(
+        "MetalsLanguageServer is not initialized yet, workspace not available"
+      )
+    }
+
   private implicit val executionContext: ExecutionContextExecutorService = ec
 
   private val fingerprints = new MutableMd5Fingerprints
   private val mtags = new Mtags
-  var workspace: AbsolutePath = _
   var focusedDocument: Option[AbsolutePath] = None
   private val focusedDocumentBuildTarget =
     new AtomicReference[b.BuildTargetIdentifier]()
@@ -165,7 +173,7 @@ class MetalsLanguageServer(
     () => userConfig,
     buildTargets
   )
-  private val remote = new RemoteLanguageServer(
+  private val remote = RemoteLanguageServer(
     () => workspace,
     () => userConfig,
     initialConfig,
@@ -207,7 +215,7 @@ class MetalsLanguageServer(
       parseTrees ::
       compilations.pauseables
   )
-  private val timerProvider: TimerProvider = new TimerProvider(time)
+  private val timerProvider = TimerProvider(time)
   private val trees = new Trees(buildTargets, buffers, scalaVersionSelector)
   private val documentSymbolProvider = new DocumentSymbolProvider(trees)
   private val onTypeFormattingProvider =
@@ -288,7 +296,7 @@ class MetalsLanguageServer(
     languageClient.underlying =
       new ConfiguredLanguageClient(client, clientConfig)(ec)
     statusBar = new StatusBar(
-      () => languageClient,
+      languageClient,
       time,
       progressTicks,
       clientConfig
@@ -322,7 +330,7 @@ class MetalsLanguageServer(
       case None =>
         languageClient.showMessage(Messages.noRoot)
       case Some(path) =>
-        workspace = AbsolutePath(Paths.get(URI.create(path))).dealias
+        workspaceOpt = Some(AbsolutePath(Paths.get(URI.create(path))).dealias)
         MetalsLogger.setupLspLogger(workspace, redirectSystemOut)
 
         val clientInfo = Option(params.getClientInfo()) match {
@@ -344,15 +352,15 @@ class MetalsLanguageServer(
           initializeParams.supportsHierarchicalDocumentSymbols
         )
         buildTargets.setWorkspaceDirectory(workspace)
-        tables = register(new Tables(workspace, time, clientConfig))
+        tables = register(new Tables(() => workspace, time, clientConfig))
         buildTargets.setTables(tables)
         workspaceReload = new WorkspaceReload(
-          workspace,
+          () => workspace,
           languageClient,
           tables
         )
         buildTools = new BuildTools(
-          workspace,
+          () => workspace,
           bspGlobalDirectories,
           () => userConfig,
           () => tables.buildServers.selectedServer().nonEmpty
@@ -360,12 +368,12 @@ class MetalsLanguageServer(
         fileSystemSemanticdbs = new FileSystemSemanticdbs(
           buildTargets,
           charset,
-          workspace,
+          () => workspace,
           fingerprints
         )
         interactiveSemanticdbs = register(
           new InteractiveSemanticdbs(
-            workspace,
+            () => workspace,
             buildTargets,
             charset,
             languageClient,
@@ -377,7 +385,7 @@ class MetalsLanguageServer(
           )
         )
         warnings = new Warnings(
-          workspace,
+          () => workspace,
           buildTargets,
           statusBar,
           clientConfig.icons,
@@ -389,7 +397,7 @@ class MetalsLanguageServer(
           languageClient,
           clientConfig.initialConfig.statistics,
           () => userConfig,
-          Option(workspace),
+          () => Option(workspace),
           trees
         )
         buildClient = new ForwardingMetalsBuildClient(
@@ -412,14 +420,14 @@ class MetalsLanguageServer(
           new ShellRunner(languageClient, () => userConfig, time, statusBar)
         )
         bloopInstall = new BloopInstall(
-          workspace,
+          () => workspace,
           languageClient,
           buildTools,
           tables,
           shellRunner
         )
         bspConfigGenerator = new BspConfigGenerator(
-          workspace,
+          () => workspace,
           languageClient,
           buildTools,
           shellRunner
@@ -430,17 +438,16 @@ class MetalsLanguageServer(
           clientConfig,
           shellRunner,
           clientConfig.icons,
-          workspace
+          () => workspace
         )
         bloopServers = new BloopServers(
-          workspace,
           buildClient,
           languageClient,
           tables,
           clientConfig.initialConfig
         )
         bspServers = new BspServers(
-          workspace,
+          () => workspace,
           charset,
           languageClient,
           buildClient,
@@ -468,7 +475,7 @@ class MetalsLanguageServer(
           )
         )
         definitionProvider = new DefinitionProvider(
-          workspace,
+          () => workspace,
           mtags,
           buffers,
           definitionIndex,
@@ -481,7 +488,7 @@ class MetalsLanguageServer(
           scalaVersionSelector
         )
         formattingProvider = new FormattingProvider(
-          workspace,
+          () => workspace,
           buffers,
           () => userConfig,
           languageClient,
@@ -492,13 +499,13 @@ class MetalsLanguageServer(
           buildTargets
         )
         newFileProvider = new NewFileProvider(
-          workspace,
+          () => workspace,
           languageClient,
           packageProvider,
           () => focusedDocument
         )
         referencesProvider = new ReferenceProvider(
-          workspace,
+          () => workspace,
           semanticdbs,
           buffers,
           definitionProvider,
@@ -508,7 +515,7 @@ class MetalsLanguageServer(
         )
         implementationProvider = new ImplementationProvider(
           semanticdbs,
-          workspace,
+          () => workspace,
           definitionIndex,
           buildTargets,
           buffers,
@@ -542,7 +549,7 @@ class MetalsLanguageServer(
         )
 
         stacktraceAnalyzer = new StacktraceAnalyzer(
-          workspace,
+          () => workspace,
           buffers,
           definitionProvider,
           clientConfig.icons,
@@ -558,7 +565,7 @@ class MetalsLanguageServer(
           referencesProvider,
           implementationProvider,
           definitionProvider,
-          workspace,
+          () => workspace,
           languageClient,
           buffers,
           compilations,
@@ -566,7 +573,7 @@ class MetalsLanguageServer(
           trees
         )
         syntheticsDecorator = new SyntheticsDecorationProvider(
-          workspace,
+          () => workspace,
           semanticdbs,
           buffers,
           languageClient,
@@ -583,27 +590,28 @@ class MetalsLanguageServer(
           implementationProvider,
           syntheticsDecorator,
           buildTargets,
-          workspace
+          () => workspace
         )
         documentHighlightProvider = new DocumentHighlightProvider(
           definitionProvider,
           semanticdbs
         )
         workspaceSymbols = new WorkspaceSymbolProvider(
-          workspace,
+          () => workspace,
           clientConfig.initialConfig.statistics,
           buildTargets,
           definitionIndex,
           excludedPackageHandler.isExcludedPackage
         )
         symbolSearch = new MetalsSymbolSearch(
+          () => workspace,
           symbolDocs,
           workspaceSymbols,
           definitionProvider
         )
         compilers = register(
           new Compilers(
-            workspace,
+            () => workspace,
             clientConfig,
             () => userConfig,
             () => ammonite,
@@ -621,7 +629,7 @@ class MetalsLanguageServer(
           )
         )
         debugProvider = new DebugProvider(
-          workspace,
+          () => workspace,
           definitionProvider,
           () => bspSession.map(_.mainConnection),
           buildTargets,
@@ -636,10 +644,10 @@ class MetalsLanguageServer(
           clientConfig,
           semanticdbs
         )
-        scalafixProvider = ScalafixProvider(
+        scalafixProvider = new ScalafixProvider(
           buffers,
           () => userConfig,
-          workspace,
+          () => workspace,
           embedded,
           statusBar,
           compilations,
@@ -666,7 +674,7 @@ class MetalsLanguageServer(
           languageClient
         )
         doctor = new Doctor(
-          workspace,
+          () => workspace,
           buildTargets,
           languageClient,
           () => bspSession,
@@ -684,7 +692,7 @@ class MetalsLanguageServer(
           fileSystemSemanticdbs
         )
         popupChoiceReset = new PopupChoiceReset(
-          workspace,
+          () => workspace,
           tables,
           languageClient,
           doctor,
@@ -695,12 +703,12 @@ class MetalsLanguageServer(
 
         val worksheetPublisher =
           if (clientConfig.isDecorationProvider)
-            new DecorationWorksheetPublisher()
+            DecorationWorksheetPublisher
           else
             new WorkspaceEditWorksheetPublisher(buffers, trees)
         worksheetProvider = register(
           new WorksheetProvider(
-            workspace,
+            () => workspace,
             buffers,
             buildTargets,
             languageClient,

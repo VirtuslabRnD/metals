@@ -7,7 +7,8 @@ import scala.meta.io.AbsolutePath
 
 import org.eclipse.{lsp4j => l}
 
-class WorksheetCodeLens(clientConfig: ClientConfiguration) extends CodeLens {
+final case class WorksheetCodeLens(clientConfig: ClientConfiguration)
+    extends CodeLens {
 
   override def isEnabled: Boolean = clientConfig.isCopyWorksheetOutputProvider
 

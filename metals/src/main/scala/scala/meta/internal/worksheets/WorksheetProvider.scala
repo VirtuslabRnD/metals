@@ -59,7 +59,7 @@ import org.eclipse.lsp4j.Position
  * Code is evaluated on file save using mdoc: https://scalameta.org/mdoc/
  */
 class WorksheetProvider(
-    workspace: AbsolutePath,
+    workspace: () => AbsolutePath,
     buffers: Buffers,
     buildTargets: BuildTargets,
     languageClient: MetalsLanguageClient,
@@ -358,7 +358,7 @@ class WorksheetProvider(
   ): EvaluatedWorksheet = {
     val mdoc = getMdoc(path)
     val input = path.toInputFromBuffers(buffers)
-    val relativePath = path.toRelative(workspace)
+    val relativePath = path.toRelative(workspace())
     val evaluatedWorksheet =
       mdoc.evaluateWorksheet(relativePath.toString(), input.value)
     val classpath = evaluatedWorksheet.classpath().asScala.toList

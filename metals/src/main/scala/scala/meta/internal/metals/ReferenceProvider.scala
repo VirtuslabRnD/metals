@@ -29,7 +29,7 @@ import org.eclipse.lsp4j.Location
 import org.eclipse.lsp4j.ReferenceParams
 
 final class ReferenceProvider(
-    workspace: AbsolutePath,
+    workspace: () => AbsolutePath,
     semanticdbs: Semanticdbs,
     buffers: Buffers,
     definition: DefinitionProvider,
@@ -258,7 +258,7 @@ final class ReferenceProvider(
      * - it's a standalone file that doesn't belong to any build target
      */
     val searchLocal =
-      isLocal || source.isDependencySource(workspace) ||
+      isLocal || source.isDependencySource(workspace()) ||
         buildTargets.inverseSources(source).isEmpty
     val local =
       if (searchLocal)
