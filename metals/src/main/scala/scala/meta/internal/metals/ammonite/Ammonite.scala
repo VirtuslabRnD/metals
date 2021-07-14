@@ -54,6 +54,8 @@ final class Ammonite(
 )(ec: ExecutionContextExecutorService)
     extends Cancelable {
 
+  val buildTargetsData = BuildTargets.Data.create()
+
   def buildServer: Option[BuildServerConnection] =
     buildServer0
   def lastImportedBuild: ImportedBuild =
