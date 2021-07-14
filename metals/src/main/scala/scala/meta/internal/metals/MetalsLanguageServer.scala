@@ -85,6 +85,7 @@ import scala.meta.ls.handlers.WorkspaceDidChangeConfigurationHandler
 import scala.meta.ls.handlers.TextDocumentReferencesHandler
 import scala.meta.ls.handlers.TextDocumentDefinitionHandler
 import scala.meta.ls.handlers.TextDocumentHoverHandler
+import scala.meta.ls.handlers.WorkspaceSymbolHandler
 
 class MetalsLanguageServer(
     ec: ExecutionContextExecutorService,
@@ -1352,22 +1353,19 @@ class MetalsLanguageServer(
     }
   }
 
+  private val workspaceSymbolHandler = WorkspaceSymbolHandler(
+    indexingPromise,
+    time,
+    workspaceSymbols,
+    clientConfig,
+    executionContext
+  )
+
   @JsonRequest("workspace/symbol")
   def workspaceSymbol(
       params: WorkspaceSymbolParams
   ): CompletableFuture[util.List[SymbolInformation]] =
-    CancelTokens.future { token =>
-      indexingPromise.future.map { _ =>
-        val timer = new Timer(time)
-        val result = workspaceSymbols.search(params.getQuery, token).asJava
-        if (clientConfig.initialConfig.statistics.isWorkspaceSymbol) {
-          scribe.info(
-            s"time: found ${result.size()} results for query '${params.getQuery}' in $timer"
-          )
-        }
-        result
-      }
-    }
+    workspaceSymbolHandler(params)
 
   def workspaceSymbol(query: String): Seq[SymbolInformation] = {
     workspaceSymbols.search(query)
