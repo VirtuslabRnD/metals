@@ -42,6 +42,7 @@ object Main {
 
       sys.exit(0)
     }
+    setupJna()
     val systemIn = System.in
     val systemOut = System.out
     val tracePrinter = GlobalTrace.setup("LSP")
@@ -77,6 +78,16 @@ object Main {
 
       sys.exit(0)
     }
+  }
+
+  private def setupJna(): Unit = {
+    // This is required to avoid the following error:
+    //   java.lang.NoClassDefFoundError: Could not initialize class com.sun.jna.platform.win32.Kernel32
+    //     at sbt.internal.io.WinMilli$.getHandle(Milli.scala:277)
+    //   There is an incompatible JNA native library installed on this system
+    //     Expected: 5.2.2
+    //     Found:    3.2.1
+    System.setProperty("jna.nosys", "true")
   }
 
 }
