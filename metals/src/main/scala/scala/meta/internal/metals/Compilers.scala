@@ -58,7 +58,7 @@ class Compilers(
     embedded: Embedded,
     statusBar: StatusBar,
     sh: ScheduledExecutorService,
-    initializeParams: Option[InitializeParams],
+    initializeParams: () => Option[InitializeParams],
     isExcludedPackage: String => Boolean,
     scalaVersionSelector: ScalaVersionSelector,
     trees: Trees,
@@ -533,13 +533,14 @@ class Compilers(
   private def configure(
       pc: PresentationCompiler,
       search: SymbolSearch
-  ): PresentationCompiler =
+  ): PresentationCompiler = {
+    val params = initializeParams()
     pc.withSearch(search)
       .withExecutorService(ec)
       .withWorkspace(workspace().toNIO)
       .withScheduledExecutorService(sh)
       .withConfiguration(
-        initializeParams
+        params
           .map(params => {
             val options = InitializationOptions.from(params).compilerOptions
             config.initialConfig.compilers.update(options)
@@ -547,12 +548,12 @@ class Compilers(
           .getOrElse(config.initialConfig.compilers)
           .copy(
             _symbolPrefixes = userConfig().symbolPrefixes,
-            isCompletionSnippetsEnabled =
-              initializeParams.supportsCompletionSnippets,
+            isCompletionSnippetsEnabled = params.supportsCompletionSnippets,
             _isStripMarginOnTypeFormattingEnabled =
               () => userConfig().enableStripMarginOnTypeFormatting
           )
       )
+  }
 
   def newCompiler(
       scalac: ScalacOptionsItem,

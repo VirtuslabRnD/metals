@@ -49,7 +49,7 @@ final case class DefinitionProvider(
     index: GlobalSymbolIndex,
     semanticdbs: Semanticdbs,
     warnings: Warnings,
-    compilers: () => Compilers,
+    compilers: Compilers,
     remote: RemoteLanguageServer,
     trees: Trees,
     buildTargets: BuildTargets,
@@ -87,7 +87,7 @@ final case class DefinitionProvider(
       }
     fromIndex.flatMap { result =>
       if (result.isEmpty) {
-        compilers().definition(params, token)
+        compilers.definition(params, token)
       } else {
         if (fromSemanticdb.isEmpty) {
           warnings.noSemanticdb(path)

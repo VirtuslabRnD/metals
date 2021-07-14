@@ -33,9 +33,9 @@ final case class Doctor(
     calculateNewBuildServer: () => BspResolvedResult,
     httpServer: () => Option[MetalsHttpServer],
     tables: Tables,
-    clientConfig: ClientConfiguration
+    clientConfig: ClientConfiguration,
+    hasProblems: AtomicBoolean
 )(implicit ec: ExecutionContext) {
-  private val hasProblems = new AtomicBoolean(false)
   private val problemResolver =
     new ProblemResolver(
       workspace,

@@ -19,7 +19,6 @@ import scala.concurrent.Promise
 import scala.concurrent.TimeoutException
 import scala.concurrent.duration.Duration
 import scala.concurrent.duration._
-import scala.util.Success
 import scala.util.control.NonFatal
 
 import scala.meta.internal.bsp.BspConfigGenerator
@@ -79,7 +78,9 @@ import scala.meta.ls.handlers.TextDocumentDefinitionHandler
 import scala.meta.ls.handlers.TextDocumentHoverHandler
 import scala.meta.ls.handlers.WorkspaceSymbolHandler
 import scala.meta.ls.handlers.ExecuteCommandHandler
+import scala.util.Success
 import scala.util.Failure
+import scala.meta.internal.worksheets.WorksheetPublisher
 
 class MetalsLanguageServer(
     ec: ExecutionContextExecutorService,
@@ -123,7 +124,15 @@ class MetalsLanguageServer(
     )
   }
 
+  var bspSession = Option.empty[BspSession]
+  var userConfig = UserConfiguration()
+  private var httpServer: Option[MetalsHttpServer] = None
+  private var initializeParams = Option.empty[InitializeParams]
   private var workspaceOpt = Option.empty[AbsolutePath]
+  private var focusedDocument: Option[AbsolutePath] = None
+
+  private val isInitialized = new AtomicBoolean(false)
+  private val hasProblems = new AtomicBoolean(false)
 
   private def workspace: AbsolutePath =
     workspaceOpt.getOrElse {
@@ -136,29 +145,34 @@ class MetalsLanguageServer(
 
   private val fingerprints = new MutableMd5Fingerprints
   private val mtags = new Mtags
-  var focusedDocument: Option[AbsolutePath] = None
   private val focusedDocumentBuildTarget =
     new AtomicReference[b.BuildTargetIdentifier]()
   private val definitionIndex = newSymbolIndex()
   private val symbolDocs = new Docstrings(definitionIndex)
-  var bspSession: Option[BspSession] =
-    Option.empty[BspSession]
   private val savedFiles = new ActiveFiles(time)
   private val openedFiles = new ActiveFiles(time)
   private val recentlyFocusedFiles = new ActiveFiles(time)
   private val languageClient = new DelegatingLanguageClient(NoopLanguageClient)
-  var userConfig: UserConfiguration = UserConfiguration()
-  val excludedPackageHandler: ExcludedPackagesHandler =
-    new ExcludedPackagesHandler(userConfig.excludedPackages)
-  var ammonite: Ammonite = _
+  private val excludedPackageHandler = new ExcludedPackagesHandler(
+    userConfig.excludedPackages
+  )
   private val mainBuildTargetsData = BuildTargets.Data.create()
+
+  private val clientConfig: ClientConfiguration =
+    ClientConfiguration(
+      initialConfig,
+      ClientExperimentalCapabilities.Default,
+      InitializationOptions.Default
+    )
+
+  val tables = register(new Tables(() => workspace, time, clientConfig))
+
   val buildTargets: BuildTargets =
     BuildTargets.withAmmonite(() => workspace, Some(tables), () => ammonite)
   buildTargets.addData(mainBuildTargetsData)
-  private val buildTargetClasses =
-    new BuildTargetClasses(buildTargets)
+  private val buildTargetClasses = new BuildTargetClasses(buildTargets)
 
-  private val scalaVersionSelector = new ScalaVersionSelector(
+  private val scalaVersionSelector = ScalaVersionSelector(
     () => userConfig,
     buildTargets
   )
@@ -204,48 +218,45 @@ class MetalsLanguageServer(
   )
   private val timerProvider = TimerProvider(time)
   private val trees = new Trees(buildTargets, buffers, scalaVersionSelector)
-  private val documentSymbolProvider = new DocumentSymbolProvider(trees)
+
+  private val supportsHierarchicalDocumentSymbols = new AtomicBoolean(true)
+  private val foldOnlyLines = new AtomicBoolean(false)
+
+  private val documentSymbolProvider = DocumentSymbolProvider(
+    trees,
+    () => supportsHierarchicalDocumentSymbols.get()
+  )
   private val multilineStringFormattingProvider =
-    new MultilineStringFormattingProvider(buffers, trees, () => userConfig)
-  private val classFinder = new ClassFinder(trees)
-  private val foldingRangeProvider = new FoldingRangeProvider(trees, buffers)
+    MultilineStringFormattingProvider(buffers, trees, () => userConfig)
+  private val classFinder = ClassFinder(trees)
+  private val foldingRangeProvider =
+    FoldingRangeProvider(trees, buffers, () => foldOnlyLines.get())
+
+  val statusBar = new StatusBar(
+    languageClient,
+    time,
+    progressTicks,
+    clientConfig
+  )
+
   // These can't be instantiated until we know the workspace root directory.
-  private var shellRunner: ShellRunner = _
-  private var bloopInstall: BloopInstall = _
-  private var bspConfigGenerator: BspConfigGenerator = _
-  private var diagnostics: Diagnostics = _
-  private var warnings: Warnings = _
-  private var fileSystemSemanticdbs: FileSystemSemanticdbs = _
-  private var interactiveSemanticdbs: InteractiveSemanticdbs = _
-  private var buildTools: BuildTools = _
-  private var newProjectProvider: NewProjectProvider = _
-  private var semanticdbs: Semanticdbs = _
-  private var buildClient: ForwardingMetalsBuildClient = _
-  private var bloopServers: BloopServers = _
-  private var bspServers: BspServers = _
-  private var bspConnector: BspConnector = _
-  private var codeLensProvider: CodeLensProvider = _
-  private var supermethods: Supermethods = _
-  private var codeActionProvider: CodeActionProvider = _
-  private var definitionProvider: DefinitionProvider = _
-  private var semanticDBIndexer: SemanticdbIndexer = _
-  private var implementationProvider: ImplementationProvider = _
-  private var renameProvider: RenameProvider = _
-  private var documentHighlightProvider: DocumentHighlightProvider = _
-  private var formattingProvider: FormattingProvider = _
-  private var syntheticsDecorator: SyntheticsDecorationProvider = _
-  private var initializeParams: Option[InitializeParams] = None
-  private var referencesProvider: ReferenceProvider = _
-  private var workspaceSymbols: WorkspaceSymbolProvider = _
-  private val packageProvider: PackageProvider =
-    new PackageProvider(buildTargets)
-  private var newFileProvider: NewFileProvider = _
-  private var debugProvider: DebugProvider = _
-  private var symbolSearch: MetalsSymbolSearch = _
-  private var compilers: Compilers = _
-  private var scalafixProvider: ScalafixProvider = _
-  private var workspaceReload: WorkspaceReload = _
-  private var buildToolSelector: BuildToolSelector = _
+  private val shellRunner = register(
+    new ShellRunner(languageClient, () => userConfig, time, statusBar)
+  )
+  private val diagnostics = new Diagnostics(
+    buffers,
+    languageClient,
+    () => clientConfig.initialConfig.statistics,
+    () => userConfig,
+    () => Option(workspace),
+    trees
+  )
+  private val fileSystemSemanticdbs = FileSystemSemanticdbs(
+    buildTargets,
+    charset,
+    () => workspace,
+    fingerprints
+  )
 
   private val sourceMapper = scala.meta.ls.SourceMapper(
     buildTargets,
@@ -253,24 +264,425 @@ class MetalsLanguageServer(
     () => workspace
   )
 
+  private val workspaceSymbols = new WorkspaceSymbolProvider(
+    () => workspace,
+    buildTargets,
+    definitionIndex,
+    excludedPackageHandler.isExcludedPackage
+  )
+  private val symbolSearch: MetalsSymbolSearch = new MetalsSymbolSearch(
+    () => workspace,
+    symbolDocs,
+    workspaceSymbols,
+    () => definitionProvider
+  )
+
+  private val embedded = register(
+    new Embedded(
+      statusBar,
+      () => userConfig
+    )
+  )
+
+  private val compilers = register(
+    new Compilers(
+      () => workspace,
+      clientConfig,
+      () => userConfig,
+      buildTargets,
+      buffers,
+      symbolSearch,
+      embedded,
+      statusBar,
+      sh,
+      () => initializeParams,
+      excludedPackageHandler.isExcludedPackage,
+      scalaVersionSelector,
+      trees,
+      sourceMapper
+    )
+  )
+
+  private val interactiveSemanticdbs: InteractiveSemanticdbs = register(
+    new InteractiveSemanticdbs(
+      () => workspace,
+      buildTargets,
+      charset,
+      languageClient,
+      tables,
+      statusBar,
+      compilers,
+      clientConfig,
+      () => semanticDBIndexer
+    )
+  )
+  private val buildTools = BuildTools(
+    () => workspace,
+    bspGlobalDirectories,
+    () => userConfig,
+    () => tables.buildServers.selectedServer().nonEmpty
+  )
+  private val bloopInstall = BloopInstall(
+    () => workspace,
+    languageClient,
+    buildTools,
+    tables,
+    shellRunner
+  )
+  private val warnings = Warnings(
+    () => workspace,
+    buildTargets,
+    statusBar,
+    () => clientConfig.icons(),
+    buildTools,
+    compilations.isCurrentlyCompiling
+  )
+  private val bspConfigGenerator = BspConfigGenerator(
+    () => workspace,
+    languageClient,
+    buildTools,
+    shellRunner
+  )
+  private val semanticdbs = AggregateSemanticdbs(
+    List(
+      fileSystemSemanticdbs,
+      interactiveSemanticdbs
+    )
+  )
+  private val buildClient = new ForwardingMetalsBuildClient(
+    languageClient,
+    diagnostics,
+    buildTargets,
+    buildTargetClasses,
+    clientConfig,
+    statusBar,
+    time,
+    report => {
+      didCompileTarget(report)
+      compilers.didCompile(report)
+    },
+    onBuildTargetDidCompile = { target =>
+      treeView.onBuildTargetDidCompile(target)
+      worksheetProvider.onBuildTargetDidCompile(target)
+    },
+    onBuildTargetDidChangeFunc = { params =>
+      val ammoniteBuildChanged =
+        params.getChanges.asScala.exists(_.getTarget.getUri.isAmmoniteScript)
+      if (ammoniteBuildChanged)
+        ammonite.importBuild().onComplete {
+          case Success(()) =>
+          case Failure(exception) =>
+            scribe.error("Error re-importing Ammonite build", exception)
+        }
+      ammoniteBuildChanged
+    }
+  )
+  private val bloopServers = BloopServers(
+    buildClient,
+    languageClient,
+    tables,
+    () => clientConfig.initialConfig
+  )
+  private val bspServers = BspServers(
+    () => workspace,
+    charset,
+    languageClient,
+    buildClient,
+    tables,
+    bspGlobalDirectories,
+    () => clientConfig.initialConfig
+  )
+  private val bspConnector = BspConnector(
+    bloopServers,
+    bspServers,
+    buildTools,
+    languageClient,
+    tables,
+    () => userConfig,
+    statusBar
+  )
+  private val definitionProvider = DefinitionProvider(
+    () => workspace,
+    mtags,
+    buffers,
+    definitionIndex,
+    semanticdbs,
+    warnings,
+    compilers,
+    remote,
+    trees,
+    buildTargets,
+    scalaVersionSelector
+  )
+  private val implementationProvider = new ImplementationProvider(
+    semanticdbs,
+    () => workspace,
+    definitionIndex,
+    buildTargets,
+    buffers,
+    definitionProvider,
+    trees,
+    scalaVersionSelector
+  )
+  private val referencesProvider = new ReferenceProvider(
+    () => workspace,
+    semanticdbs,
+    buffers,
+    definitionProvider,
+    remote,
+    trees
+  )
+  private val renameProvider = new RenameProvider(
+    referencesProvider,
+    implementationProvider,
+    definitionProvider,
+    () => workspace,
+    languageClient,
+    buffers,
+    compilations,
+    clientConfig,
+    trees
+  )
+  private val supermethods = Supermethods(
+    languageClient,
+    definitionProvider,
+    implementationProvider
+  )
+  private val documentHighlightProvider = DocumentHighlightProvider(
+    definitionProvider,
+    semanticdbs
+  )
+  private val formattingProvider = new FormattingProvider(
+    () => workspace,
+    buffers,
+    () => userConfig,
+    languageClient,
+    clientConfig,
+    statusBar,
+    () => clientConfig.icons,
+    tables,
+    buildTargets
+  )
+  private val packageProvider = PackageProvider(buildTargets)
+  private val newFileProvider = NewFileProvider(
+    () => workspace,
+    languageClient,
+    packageProvider,
+    () => focusedDocument
+  )
+  private val scalafixProvider = new ScalafixProvider(
+    buffers,
+    () => userConfig,
+    () => workspace,
+    statusBar,
+    compilations,
+    languageClient,
+    buildTargets,
+    buildClient
+  )
+  private val workspaceReload = WorkspaceReload(
+    () => workspace,
+    languageClient,
+    tables
+  )
+  private val buildToolSelector = BuildToolSelector(
+    languageClient,
+    tables
+  )
+  private val codeActionProvider = CodeActionProvider(
+    compilers,
+    buffers,
+    buildTargets,
+    scalafixProvider,
+    trees,
+    diagnostics,
+    languageClient
+  )
+
   def loadedPresentationCompilerCount(): Int =
     compilers.loadedPresentationCompilerCount()
-  var tables: Tables = _
-  var statusBar: StatusBar = _
-  private var embedded: Embedded = _
-  private var doctor: Doctor = _
-  var httpServer: Option[MetalsHttpServer] = None
-  var treeView: TreeViewProvider = NoopTreeViewProvider
-  var worksheetProvider: WorksheetProvider = _
-  var popupChoiceReset: PopupChoiceReset = _
-  var stacktraceAnalyzer: StacktraceAnalyzer = _
+  val stacktraceAnalyzer = StacktraceAnalyzer(
+    () => workspace,
+    buffers,
+    definitionProvider,
+    () => clientConfig.icons(),
+    () => clientConfig.isCommandInHtmlSupported()
+  )
 
-  private val clientConfig: ClientConfiguration =
-    new ClientConfiguration(
-      initialConfig,
-      ClientExperimentalCapabilities.Default,
-      InitializationOptions.Default
+  private var worksheetPublisher: WorksheetPublisher =
+    DecorationWorksheetPublisher
+  val worksheetProvider: WorksheetProvider = {
+    register(
+      new WorksheetProvider(
+        () => workspace,
+        buffers,
+        buildTargets,
+        languageClient,
+        () => userConfig,
+        statusBar,
+        diagnostics,
+        embedded,
+        () => worksheetPublisher,
+        compilers,
+        compilations,
+        scalaVersionSelector
+      )
     )
+  }
+
+  var treeView: TreeViewProvider = NoopTreeViewProvider
+
+  private val debugProvider = DebugProvider(
+    () => workspace,
+    definitionProvider,
+    () => bspSession.map(_.mainConnection),
+    buildTargets,
+    buildTargetClasses,
+    compilations,
+    languageClient,
+    buildClient,
+    classFinder,
+    definitionIndex,
+    stacktraceAnalyzer,
+    clientConfig,
+    semanticdbs
+  )
+  private val syntheticsDecorator = SyntheticsDecorationProvider(
+    () => workspace,
+    semanticdbs,
+    buffers,
+    languageClient,
+    fingerprints,
+    charset,
+    () => focusedDocument,
+    clientConfig,
+    () => userConfig,
+    trees
+  )
+  private val newProjectProvider = new NewProjectProvider(
+    languageClient,
+    statusBar,
+    clientConfig,
+    shellRunner,
+    () => workspace
+  )
+  private val semanticDBIndexer = SemanticdbIndexer(
+    referencesProvider,
+    implementationProvider,
+    syntheticsDecorator,
+    buildTargets,
+    () => workspace
+  )
+
+  private val doctor = Doctor(
+    () => workspace,
+    buildTargets,
+    languageClient,
+    () => bspSession,
+    () => bspConnector.resolve(),
+    () => httpServer,
+    tables,
+    clientConfig,
+    hasProblems
+  )
+
+  val ammonite: Ammonite = register(
+    new Ammonite(
+      buffers,
+      compilers,
+      compilations,
+      statusBar,
+      diagnostics,
+      doctor,
+      tables,
+      languageClient,
+      buildClient,
+      () => userConfig,
+      () => indexer.profiledIndexWorkspace(() => ()),
+      () => workspace,
+      () => focusedDocument,
+      buildTargets,
+      buildTools,
+      () => clientConfig.initialConfig,
+      scalaVersionSelector
+    )
+  )
+
+  private val indexer = scala.meta.ls.Indexer(
+    workspaceReload,
+    doctor,
+    languageClient,
+    () => bspSession,
+    executionContext,
+    tables,
+    statusBar,
+    timerProvider,
+    scalafixProvider,
+    indexingPromise,
+    ammonite,
+    () => buildServerManager.lastImportedBuilds,
+    clientConfig,
+    definitionIndex,
+    referencesProvider,
+    workspaceSymbols,
+    buildTargets,
+    mainBuildTargetsData,
+    interactiveSemanticdbs,
+    buildClient,
+    semanticDBIndexer,
+    () => treeView,
+    worksheetProvider,
+    symbolSearch,
+    buildTools,
+    formattingProvider,
+    fileWatcher,
+    () => focusedDocument,
+    focusedDocumentBuildTarget,
+    buildTargetClasses,
+    () => userConfig,
+    sh,
+    symbolDocs,
+    scalaVersionSelector,
+    sourceMapper
+  )
+
+  private val buildServerManager: scala.meta.ls.BuildServerManager =
+    new scala.meta.ls.BuildServerManager(
+      tables,
+      languageClient,
+      buildTools,
+      warnings,
+      buildToolSelector,
+      executionContext,
+      () => workspace,
+      indexer,
+      bloopInstall,
+      buildServerPromise,
+      compilations,
+      buffers,
+      compilers,
+      timerProvider,
+      bspConnector,
+      () => userConfig,
+      () => treeView,
+      () => bspSession,
+      sess => { bspSession = sess },
+      statusBar,
+      doctor,
+      mainBuildTargetsData,
+      diagnostics,
+      bloopServers
+    )
+
+  private val popupChoiceReset = PopupChoiceReset(
+    () => workspace,
+    tables,
+    languageClient,
+    doctor,
+    () => buildServerManager.slowConnectToBuildServer(forceImport = true),
+    bspConnector,
+    () => buildServerManager.quickConnectToBuildServer()
+  )
 
   private def parseTreesAndPublishDiags(
       paths: Seq[AbsolutePath]
@@ -287,18 +699,6 @@ class MetalsLanguageServer(
   def connectToLanguageClient(client: MetalsLanguageClient): Unit = {
     languageClient.underlying =
       new ConfiguredLanguageClient(client, clientConfig)(ec)
-    statusBar = new StatusBar(
-      languageClient,
-      time,
-      progressTicks,
-      clientConfig
-    )
-    embedded = register(
-      new Embedded(
-        statusBar,
-        () => userConfig
-      )
-    )
     LanguageClientLogger.languageClient = Some(languageClient)
     cancelables.add(() => languageClient.shutdown())
   }
@@ -306,6 +706,55 @@ class MetalsLanguageServer(
   private def register[T <: Cancelable](cancelable: T): T = {
     cancelables.add(cancelable)
     cancelable
+  }
+
+  private val runTestLensProvider =
+    RunTestCodeLens(
+      buildTargetClasses,
+      buffers,
+      buildTargets,
+      clientConfig,
+      () => bspSession.map(_.main.hasDebug).getOrElse(false),
+      trees
+    )
+  private val goSuperLensProvider = SuperMethodCodeLens(
+    implementationProvider,
+    buffers,
+    () => userConfig,
+    clientConfig,
+    trees
+  )
+  private val worksheetCodeLens = WorksheetCodeLens(clientConfig)
+  private val codeLensProvider = CodeLensProvider(
+    List(runTestLensProvider, goSuperLensProvider, worksheetCodeLens),
+    semanticdbs,
+    stacktraceAnalyzer
+  )
+
+  private def onClientConfigInitializationOptions(): Unit = {
+    supportsHierarchicalDocumentSymbols.set(
+      initializeParams.supportsHierarchicalDocumentSymbols
+    )
+    worksheetPublisher =
+      if (clientConfig.isDecorationProvider)
+        DecorationWorksheetPublisher
+      else
+        new WorkspaceEditWorksheetPublisher(buffers, trees)
+    treeView =
+      if (clientConfig.isTreeViewProvider)
+        new MetalsTreeViewProvider(
+          () => workspace,
+          languageClient,
+          buildTargets,
+          () => buildClient.ongoingCompilations(),
+          definitionIndex,
+          clientConfig.initialConfig.statistics,
+          id => compilations.compileTarget(id),
+          sh,
+          () => bspSession.map(_.mainConnectionIsBloop).getOrElse(false)
+        )
+      else
+        NoopTreeViewProvider
   }
 
   private def updateWorkspaceDirectory(params: InitializeParams): Unit = {
@@ -337,404 +786,9 @@ class MetalsLanguageServer(
         clientConfig.experimentalCapabilities =
           ClientExperimentalCapabilities.from(params.getCapabilities)
         clientConfig.initializationOptions = InitializationOptions.from(params)
+        onClientConfigInitializationOptions()
 
-        foldingRangeProvider.setFoldOnlyLines(Option(params).foldOnlyLines)
-        documentSymbolProvider.setSupportsHierarchicalDocumentSymbols(
-          initializeParams.supportsHierarchicalDocumentSymbols
-        )
-        tables = register(new Tables(() => workspace, time, clientConfig))
-        workspaceReload = new WorkspaceReload(
-          () => workspace,
-          languageClient,
-          tables
-        )
-        buildTools = new BuildTools(
-          () => workspace,
-          bspGlobalDirectories,
-          () => userConfig,
-          () => tables.buildServers.selectedServer().nonEmpty
-        )
-        fileSystemSemanticdbs = new FileSystemSemanticdbs(
-          buildTargets,
-          charset,
-          () => workspace,
-          fingerprints
-        )
-        interactiveSemanticdbs = register(
-          new InteractiveSemanticdbs(
-            () => workspace,
-            buildTargets,
-            charset,
-            languageClient,
-            tables,
-            statusBar,
-            () => compilers,
-            clientConfig,
-            () => semanticDBIndexer
-          )
-        )
-        warnings = new Warnings(
-          () => workspace,
-          buildTargets,
-          statusBar,
-          clientConfig.icons,
-          buildTools,
-          compilations.isCurrentlyCompiling
-        )
-        diagnostics = new Diagnostics(
-          buffers,
-          languageClient,
-          clientConfig.initialConfig.statistics,
-          () => userConfig,
-          () => Option(workspace),
-          trees
-        )
-        buildClient = new ForwardingMetalsBuildClient(
-          languageClient,
-          diagnostics,
-          buildTargets,
-          buildTargetClasses,
-          clientConfig,
-          statusBar,
-          time,
-          report => {
-            didCompileTarget(report)
-            compilers.didCompile(report)
-          },
-          onBuildTargetDidCompile = { target =>
-            treeView.onBuildTargetDidCompile(target)
-            worksheetProvider.onBuildTargetDidCompile(target)
-          },
-          onBuildTargetDidChangeFunc = { params =>
-            val ammoniteBuildChanged =
-              params.getChanges.asScala.exists(
-                _.getTarget.getUri.isAmmoniteScript
-              )
-            if (ammoniteBuildChanged)
-              ammonite.importBuild().onComplete {
-                case Success(()) =>
-                case Failure(exception) =>
-                  scribe.error("Error re-importing Ammonite build", exception)
-              }
-            ammoniteBuildChanged
-          }
-        )
-        shellRunner = register(
-          new ShellRunner(languageClient, () => userConfig, time, statusBar)
-        )
-        bloopInstall = new BloopInstall(
-          () => workspace,
-          languageClient,
-          buildTools,
-          tables,
-          shellRunner
-        )
-        bspConfigGenerator = new BspConfigGenerator(
-          () => workspace,
-          languageClient,
-          buildTools,
-          shellRunner
-        )
-        newProjectProvider = new NewProjectProvider(
-          languageClient,
-          statusBar,
-          clientConfig,
-          shellRunner,
-          () => workspace
-        )
-        bloopServers = new BloopServers(
-          buildClient,
-          languageClient,
-          tables,
-          clientConfig.initialConfig
-        )
-        bspServers = new BspServers(
-          () => workspace,
-          charset,
-          languageClient,
-          buildClient,
-          tables,
-          bspGlobalDirectories,
-          clientConfig.initialConfig
-        )
-        buildToolSelector = new BuildToolSelector(
-          languageClient,
-          tables
-        )
-        bspConnector = new BspConnector(
-          bloopServers,
-          bspServers,
-          buildTools,
-          languageClient,
-          tables,
-          () => userConfig,
-          statusBar
-        )
-        semanticdbs = AggregateSemanticdbs(
-          List(
-            fileSystemSemanticdbs,
-            interactiveSemanticdbs
-          )
-        )
-        definitionProvider = new DefinitionProvider(
-          () => workspace,
-          mtags,
-          buffers,
-          definitionIndex,
-          semanticdbs,
-          warnings,
-          () => compilers,
-          remote,
-          trees,
-          buildTargets,
-          scalaVersionSelector
-        )
-        formattingProvider = new FormattingProvider(
-          () => workspace,
-          buffers,
-          () => userConfig,
-          languageClient,
-          clientConfig,
-          statusBar,
-          clientConfig.icons,
-          tables,
-          buildTargets
-        )
-        newFileProvider = new NewFileProvider(
-          () => workspace,
-          languageClient,
-          packageProvider,
-          () => focusedDocument
-        )
-        referencesProvider = new ReferenceProvider(
-          () => workspace,
-          semanticdbs,
-          buffers,
-          definitionProvider,
-          remote,
-          trees
-        )
-        implementationProvider = new ImplementationProvider(
-          semanticdbs,
-          () => workspace,
-          definitionIndex,
-          buildTargets,
-          buffers,
-          definitionProvider,
-          trees,
-          scalaVersionSelector
-        )
-
-        supermethods = new Supermethods(
-          languageClient,
-          definitionProvider,
-          implementationProvider
-        )
-
-        val runTestLensProvider =
-          new RunTestCodeLens(
-            buildTargetClasses,
-            buffers,
-            buildTargets,
-            clientConfig,
-            () => bspSession.map(_.main.hasDebug).getOrElse(false),
-            trees
-          )
-
-        val goSuperLensProvider = new SuperMethodCodeLens(
-          implementationProvider,
-          buffers,
-          () => userConfig,
-          clientConfig,
-          trees
-        )
-
-        stacktraceAnalyzer = new StacktraceAnalyzer(
-          () => workspace,
-          buffers,
-          definitionProvider,
-          clientConfig.icons,
-          clientConfig.isCommandInHtmlSupported
-        )
-        val worksheetCodeLens = new WorksheetCodeLens(clientConfig)
-        codeLensProvider = new CodeLensProvider(
-          List(runTestLensProvider, goSuperLensProvider, worksheetCodeLens),
-          semanticdbs,
-          stacktraceAnalyzer
-        )
-        renameProvider = new RenameProvider(
-          referencesProvider,
-          implementationProvider,
-          definitionProvider,
-          () => workspace,
-          languageClient,
-          buffers,
-          compilations,
-          clientConfig,
-          trees
-        )
-        syntheticsDecorator = new SyntheticsDecorationProvider(
-          () => workspace,
-          semanticdbs,
-          buffers,
-          languageClient,
-          fingerprints,
-          charset,
-          () => focusedDocument,
-          clientConfig,
-          () => userConfig,
-          trees
-        )
-        semanticDBIndexer = new SemanticdbIndexer(
-          referencesProvider,
-          implementationProvider,
-          syntheticsDecorator,
-          buildTargets,
-          () => workspace
-        )
-        documentHighlightProvider = new DocumentHighlightProvider(
-          definitionProvider,
-          semanticdbs
-        )
-        workspaceSymbols = new WorkspaceSymbolProvider(
-          () => workspace,
-          buildTargets,
-          definitionIndex,
-          excludedPackageHandler.isExcludedPackage
-        )
-        symbolSearch = new MetalsSymbolSearch(
-          () => workspace,
-          symbolDocs,
-          workspaceSymbols,
-          definitionProvider
-        )
-        compilers = register(
-          new Compilers(
-            () => workspace,
-            clientConfig,
-            () => userConfig,
-            buildTargets,
-            buffers,
-            symbolSearch,
-            embedded,
-            statusBar,
-            sh,
-            Option(params),
-            excludedPackageHandler.isExcludedPackage,
-            scalaVersionSelector,
-            trees,
-            sourceMapper
-          )
-        )
-        debugProvider = new DebugProvider(
-          () => workspace,
-          definitionProvider,
-          () => bspSession.map(_.mainConnection),
-          buildTargets,
-          buildTargetClasses,
-          compilations,
-          languageClient,
-          buildClient,
-          classFinder,
-          definitionIndex,
-          stacktraceAnalyzer,
-          clientConfig,
-          semanticdbs
-        )
-        scalafixProvider = new ScalafixProvider(
-          buffers,
-          () => userConfig,
-          () => workspace,
-          statusBar,
-          compilations,
-          languageClient,
-          buildTargets,
-          buildClient
-        )
-        codeActionProvider = new CodeActionProvider(
-          compilers,
-          buffers,
-          buildTargets,
-          scalafixProvider,
-          trees,
-          diagnostics,
-          languageClient
-        )
-        doctor = new Doctor(
-          () => workspace,
-          buildTargets,
-          languageClient,
-          () => bspSession,
-          () => bspConnector.resolve(),
-          () => httpServer,
-          tables,
-          clientConfig
-        )
-        popupChoiceReset = new PopupChoiceReset(
-          () => workspace,
-          tables,
-          languageClient,
-          doctor,
-          () => buildServerManager.slowConnectToBuildServer(forceImport = true),
-          bspConnector,
-          () => buildServerManager.quickConnectToBuildServer()
-        )
-
-        val worksheetPublisher =
-          if (clientConfig.isDecorationProvider)
-            DecorationWorksheetPublisher
-          else
-            new WorkspaceEditWorksheetPublisher(buffers, trees)
-        worksheetProvider = register(
-          new WorksheetProvider(
-            () => workspace,
-            buffers,
-            buildTargets,
-            languageClient,
-            () => userConfig,
-            statusBar,
-            diagnostics,
-            embedded,
-            worksheetPublisher,
-            compilers,
-            compilations,
-            scalaVersionSelector
-          )
-        )
-        ammonite = register(
-          new Ammonite(
-            buffers,
-            compilers,
-            compilations,
-            statusBar,
-            diagnostics,
-            doctor,
-            () => tables,
-            languageClient,
-            buildClient,
-            () => userConfig,
-            () => indexer.profiledIndexWorkspace(() => ()),
-            () => workspace,
-            () => focusedDocument,
-            buildTargets,
-            () => buildTools,
-            clientConfig.initialConfig,
-            scalaVersionSelector
-          )
-        )
-        if (clientConfig.isTreeViewProvider) {
-          treeView = new MetalsTreeViewProvider(
-            () => workspace,
-            languageClient,
-            buildTargets,
-            () => buildClient.ongoingCompilations(),
-            definitionIndex,
-            clientConfig.initialConfig.statistics,
-            id => compilations.compileTarget(id),
-            sh,
-            () => bspSession.map(_.mainConnectionIsBloop).getOrElse(false)
-          )
-        }
+        foldOnlyLines.set(Option(params).foldOnlyLines)
     }
   }
 
@@ -873,7 +927,6 @@ class MetalsLanguageServer(
     }
   }
 
-  val isInitialized = new AtomicBoolean(false)
   @JsonNotification("initialized")
   def initialized(params: InitializedParams): CompletableFuture[Unit] = {
     // Avoid duplicate `initialized` notifications. During the transition
@@ -1457,79 +1510,14 @@ class MetalsLanguageServer(
         .orNull
     }.asJava
 
-  private val indexer = scala.meta.ls.Indexer(
-    workspaceReload,
-    doctor,
-    languageClient,
-    () => bspSession,
-    executionContext,
-    tables,
-    statusBar,
-    timerProvider,
-    scalafixProvider,
-    indexingPromise,
-    ammonite,
-    () => buildServerManager.lastImportedBuilds,
-    clientConfig,
-    definitionIndex,
-    referencesProvider,
-    workspaceSymbols,
-    buildTargets,
-    mainBuildTargetsData,
-    interactiveSemanticdbs,
-    buildClient,
-    semanticDBIndexer,
-    () => treeView,
-    worksheetProvider,
-    symbolSearch,
-    buildTools,
-    formattingProvider,
-    fileWatcher,
-    () => focusedDocument,
-    focusedDocumentBuildTarget,
-    buildTargetClasses,
-    () => userConfig,
-    sh,
-    symbolDocs,
-    scalaVersionSelector,
-    sourceMapper
-  )
-
-  private val buildServerManager: scala.meta.ls.BuildServerManager =
-    new scala.meta.ls.BuildServerManager(
-      tables,
-      languageClient,
-      buildTools,
-      warnings,
-      buildToolSelector,
-      executionContext,
-      () => workspace,
-      indexer,
-      bloopInstall,
-      buildServerPromise,
-      compilations,
-      buffers,
-      compilers,
-      timerProvider,
-      bspConnector,
-      () => userConfig,
-      () => treeView,
-      () => bspSession,
-      sess => { bspSession = sess },
-      statusBar,
-      doctor,
-      mainBuildTargetsData,
-      diagnostics,
-      bloopServers
-    )
-
   private def onWorksheetChanged(
       paths: Seq[AbsolutePath]
   ): Future[Unit] = {
     paths
       .find { path =>
-        if (clientConfig.isDidFocusProvider || focusedDocument.isDefined) {
-          focusedDocument.contains(path) &&
+        val focusedDocument0 = focusedDocument
+        if (clientConfig.isDidFocusProvider || focusedDocument0.isDefined) {
+          focusedDocument0.contains(path) &&
           path.isWorksheet
         } else {
           path.isWorksheet

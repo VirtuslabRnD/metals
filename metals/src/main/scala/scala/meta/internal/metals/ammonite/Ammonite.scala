@@ -37,7 +37,7 @@ final class Ammonite(
     statusBar: StatusBar,
     diagnostics: Diagnostics,
     doctor: Doctor,
-    tables: () => Tables,
+    tables: Tables,
     languageClient: MetalsLanguageClient,
     buildClient: ForwardingMetalsBuildClient,
     userConfig: () => UserConfiguration,
@@ -45,8 +45,8 @@ final class Ammonite(
     workspace: () => AbsolutePath,
     focusedDocument: () => Option[AbsolutePath],
     buildTargets: BuildTargets,
-    buildTools: () => BuildTools,
-    config: MetalsServerConfig,
+    buildTools: BuildTools,
+    config: () => MetalsServerConfig,
     scalaVersionSelector: ScalaVersionSelector
 )(implicit ec: ExecutionContextExecutorService)
     extends Cancelable {
@@ -178,7 +178,7 @@ final class Ammonite(
     path.toNIO.getFileName.toString == "build.sc" &&
       // for now, this only checks for build.sc, but this could be made more strict in the future
       // (require ./mill or ./.mill-version)
-      buildTools().isMill
+      buildTools.isMill
 
   def maybeImport(path: AbsolutePath): Future[Unit] =
     if (path.isAmmoniteScript && !isMillBuildSc(path) && !loaded(path)) {
@@ -194,7 +194,7 @@ final class Ammonite(
         }
 
       val autoImport =
-        tables().dismissedNotifications.AmmoniteImportAuto.isDismissed
+        tables.dismissedNotifications.AmmoniteImportAuto.isDismissed
       if (autoImport) {
         doImport()
         Future.unit
@@ -207,7 +207,7 @@ final class Ammonite(
           case Success(resp) =>
             resp.getTitle match {
               case Messages.ImportAmmoniteScript.importAll =>
-                tables().dismissedNotifications.AmmoniteImportAuto
+                tables.dismissedNotifications.AmmoniteImportAuto
                   .dismissForever()
                 doImport()
               case Messages.ImportAmmoniteScript.doImport =>
@@ -260,8 +260,8 @@ final class Ammonite(
                 script +: extraScripts,
                 workspace()
               ),
-          tables().dismissedNotifications.ReconnectAmmonite,
-          config,
+          tables.dismissedNotifications.ReconnectAmmonite,
+          config(),
           "Ammonite"
         )
         for {

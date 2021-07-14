@@ -34,7 +34,7 @@ final class InteractiveSemanticdbs(
     client: MetalsLanguageClient,
     tables: Tables,
     statusBar: StatusBar,
-    compilers: () => Compilers,
+    compilers: Compilers,
     clientConfig: ClientConfiguration,
     semanticdbIndexer: () => SemanticdbIndexer
 ) extends Cancelable
@@ -151,11 +151,11 @@ final class InteractiveSemanticdbs(
 
   private def compile(source: AbsolutePath, text: String): s.TextDocument = {
     def worksheetCompiler =
-      if (source.isWorksheet) compilers().loadWorksheetCompiler(source)
+      if (source.isWorksheet) compilers.loadWorksheetCompiler(source)
       else None
     def fromTarget = for {
       buildTarget <- buildTargets.inverseSources(source)
-      pc <- compilers().loadCompiler(buildTarget)
+      pc <- compilers.loadCompiler(buildTarget)
     } yield pc
 
     val pc = worksheetCompiler
@@ -164,9 +164,9 @@ final class InteractiveSemanticdbs(
         // load presentation compiler for sources that were create by a worksheet definition request
         tables.worksheetSources
           .getWorksheet(source)
-          .flatMap(compilers().loadWorksheetCompiler)
+          .flatMap(compilers.loadWorksheetCompiler)
       }
-      .getOrElse(compilers().fallbackCompiler)
+      .getOrElse(compilers.fallbackCompiler)
 
     val (prependedLinesSize, modifiedText) =
       buildTargets
