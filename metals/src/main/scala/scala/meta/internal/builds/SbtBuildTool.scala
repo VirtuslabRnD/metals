@@ -330,7 +330,6 @@ object SbtBuildTool {
   def sbtInputPosAdjustment(
       originInput: Input.VirtualFile,
       autoImports: Seq[String],
-      uri: String,
       position: Position
   ): (Input.VirtualFile, Position, AdjustLspData) = {
 
