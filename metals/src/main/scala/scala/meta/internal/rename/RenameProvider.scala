@@ -50,7 +50,7 @@ final class RenameProvider(
     referenceProvider: ReferenceProvider,
     implementationProvider: ImplementationProvider,
     definitionProvider: DefinitionProvider,
-    workspace: AbsolutePath,
+    workspace: () => AbsolutePath,
     client: MetalsLanguageClient,
     buffers: Buffers,
     compilations: Compilations,
@@ -437,7 +437,7 @@ final class RenameProvider(
   ): Boolean = {
 
     def isFromWorkspace = {
-      val isInWorkspace = definitionPath.isWorkspaceSource(workspace)
+      val isInWorkspace = definitionPath.isWorkspaceSource(workspace())
       if (isInWorkspace && definitionPath.isJava) {
         client.showMessage(javaSymbol(symbol.desc.name.value))
       }

@@ -20,6 +20,7 @@ import org.eclipse.lsp4j.Location
  * Implementation of SymbolSearch that delegates to WorkspaceSymbolProvider and SymbolDocumentationIndexer.
  */
 class MetalsSymbolSearch(
+    workspace: () => AbsolutePath,
     docs: Docstrings,
     wsp: WorkspaceSymbolProvider,
     defn: DefinitionProvider
@@ -55,7 +56,7 @@ class MetalsSymbolSearch(
       .definitionPathInputFromSymbol(symbol, sourcePath)
       .map(input => {
         val path = AbsolutePath(input.path)
-        if (path.isWorkspaceSource(wsp.workspace)) {
+        if (path.isWorkspaceSource(workspace())) {
           // If the source file is a workspace source, retrieve its symbols from
           // WorkspaceSymbolProvider so that metals server can reuse its cache.
           wsp.inWorkspace

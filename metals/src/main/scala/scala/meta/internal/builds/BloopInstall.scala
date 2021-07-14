@@ -23,21 +23,21 @@ import scala.meta.io.AbsolutePath
  * - launching embedded build tool via system process
  * - reporting client about `bloopInstall` progress
  */
-final class BloopInstall(
-    workspace: AbsolutePath,
+final case class BloopInstall(
+    workspace: () => AbsolutePath,
     languageClient: MetalsLanguageClient,
     buildTools: BuildTools,
     tables: Tables,
     shellRunner: ShellRunner
 )(implicit ec: ExecutionContext) {
 
-  override def toString: String = s"BloopInstall($workspace)"
+  override def toString: String = s"BloopInstall(${workspace()})"
 
   def runUnconditionally(
       buildTool: BuildTool
   ): Future[WorkspaceLoadedStatus] = {
     buildTool.bloopInstall(
-      workspace,
+      workspace(),
       languageClient,
       args => {
         scribe.info(s"running '${args.mkString(" ")}'")
@@ -62,7 +62,7 @@ final class BloopInstall(
       .run(
         s"${buildTool.executableName} bloopInstall",
         args,
-        workspace,
+        workspace(),
         buildTool.redirectErrorOutput,
         Map(
           "COURSIER_PROGRESS" -> "disable",
@@ -84,7 +84,7 @@ final class BloopInstall(
     processFuture
   }
 
-  private val notification = tables.dismissedNotifications.ImportChanges
+  private def notification = tables.dismissedNotifications.ImportChanges
 
   private def oldInstallResult(
       digest: String
@@ -137,7 +137,7 @@ final class BloopInstall(
       status: Status,
       buildTool: BuildTool
   ): Unit = {
-    buildTool.digest(workspace).foreach { checksum =>
+    buildTool.digest(workspace()).foreach { checksum =>
       tables.digests.setStatus(checksum, status)
     }
   }

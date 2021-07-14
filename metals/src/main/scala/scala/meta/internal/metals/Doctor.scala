@@ -25,8 +25,8 @@ import org.eclipse.lsp4j.ExecuteCommandParams
  *
  * At the moment, the doctor only validates that SemanticDB is enabled for all projects.
  */
-final class Doctor(
-    workspace: AbsolutePath,
+final case class Doctor(
+    workspace: () => AbsolutePath,
     buildTargets: BuildTargets,
     languageClient: MetalsLanguageClient,
     currentBuildServer: () => Option[BspSession],
@@ -384,8 +384,8 @@ final class Doctor(
       "two build targets: main and test."
   private val noBuildTargetsTitle =
     s"${Icons.unicode.alert} No build targets were detected in this workspace so most functionality won't work."
-  private val noBuildTargetRecOne =
-    s"Make sure the workspace directory '$workspace' matches the root of your build."
+  private def noBuildTargetRecOne =
+    s"Make sure the workspace directory '${workspace()}' matches the root of your build."
   private val noBuildTargetRecTwo =
     "Try removing the directories .metals/ and .bloop/, then restart metals And import the build again."
 }

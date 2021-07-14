@@ -39,7 +39,7 @@ final class Diagnostics(
     languageClient: LanguageClient,
     statistics: StatisticsConfig,
     config: () => UserConfiguration,
-    workspace: Option[AbsolutePath],
+    workspace: () => Option[AbsolutePath],
     trees: Trees
 ) {
   private val diagnostics =
@@ -80,7 +80,8 @@ final class Diagnostics(
 
   def onSyntaxError(path: AbsolutePath, diags: List[Diagnostic]): Unit = {
     diags.headOption match {
-      case Some(diagnostic) if !workspace.exists(path.isInReadonlyDirectory) =>
+      case Some(diagnostic)
+          if !workspace().exists(path.isInReadonlyDirectory) =>
         syntaxError(path) = diagnostic
         publishDiagnostics(path)
       case None =>

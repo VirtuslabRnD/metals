@@ -6,7 +6,7 @@ import scala.concurrent.Future
 /**
  * Helper class to provider functionality around timers.
  */
-final class TimerProvider(time: Time)(implicit ec: ExecutionContext) {
+final case class TimerProvider(time: Time)(implicit ec: ExecutionContext) {
   def timed[T](
       didWhat: String,
       reportStatus: Boolean = false

@@ -18,8 +18,8 @@ import org.eclipse.lsp4j.MessageActionItem
 /**
  * Runs a process to create a .bsp entry for a givev buildtool.
  */
-final class BspConfigGenerator(
-    workspace: AbsolutePath,
+final case class BspConfigGenerator(
+    workspace: () => AbsolutePath,
     languageClient: MetalsLanguageClient,
     buildTools: BuildTools,
     shellRunner: ShellRunner
@@ -32,7 +32,7 @@ final class BspConfigGenerator(
       .run(
         s"${buildTool.executableName} bspConfig",
         args,
-        workspace,
+        workspace(),
         buildTool.redirectErrorOutput
       )
       .map(BspConfigGenerationStatus.fromExitCode)
@@ -47,7 +47,7 @@ final class BspConfigGenerator(
     for {
       Some(buildTool) <- chooseBuildServerProvider(buildTools)
       status <- buildTool.generateBspConfig(
-        workspace,
+        workspace(),
         languageClient,
         args => runUnconditionally(buildTool, args)
       )

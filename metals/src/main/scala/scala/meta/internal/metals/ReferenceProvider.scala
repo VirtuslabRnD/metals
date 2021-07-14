@@ -28,7 +28,7 @@ import org.eclipse.lsp4j.Location
 import org.eclipse.lsp4j.ReferenceParams
 
 final class ReferenceProvider(
-    workspace: AbsolutePath,
+    workspace: () => AbsolutePath,
     semanticdbs: Semanticdbs,
     buffers: Buffers,
     definition: DefinitionProvider,
@@ -200,7 +200,7 @@ final class ReferenceProvider(
       val visited = scala.collection.mutable.Set.empty[AbsolutePath]
       // when searching for references of dependency source symbol from the source itself we should return both local and workspace usage
       val localLocations: Seq[Location] =
-        if (source.isDependencySource(workspace)) {
+        if (source.isDependencySource(workspace())) {
           referenceLocations(
             snapshot,
             isSymbol,

@@ -16,7 +16,7 @@ object TestingWorkspaceSymbolProvider {
       bucketSize: Int = CompressedPackageIndex.DefaultBucketSize
   ): WorkspaceSymbolProvider = {
     new WorkspaceSymbolProvider(
-      workspace = workspace,
+      workspace = () => workspace,
       statistics = statistics,
       buildTargets = BuildTargets.withoutAmmonite,
       index = index,

@@ -30,8 +30,7 @@ import org.eclipse.lsp4j.services.LanguageClient
  * Eventually, this class may be superseded by "BSP connection protocol":
  * https://build-server-protocol.github.io/docs/server-discovery.html
  */
-final class BloopServers(
-    workspace: AbsolutePath,
+final case class BloopServers(
     client: MetalsBuildClient,
     languageClient: LanguageClient,
     tables: Tables,

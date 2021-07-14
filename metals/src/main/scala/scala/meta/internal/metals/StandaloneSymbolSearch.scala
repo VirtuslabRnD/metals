@@ -45,11 +45,11 @@ class StandaloneSymbolSearch(
   private val docs = new Docstrings(index)
   private val mtags = new Mtags()
   private val destinationProvider =
-    new DestinationProvider(
+    DestinationProvider(
       index,
       buffers,
       mtags,
-      workspace,
+      () => workspace,
       semanticdbsFallback = None,
       trees,
       buildTargets

@@ -143,7 +143,7 @@ final class TestingServer(
   private val trees = new Trees(
     server.buildTargets,
     buffers,
-    new ScalaVersionSelector(
+    ScalaVersionSelector(
       () => UserConfiguration.default,
       server.buildTargets
     )

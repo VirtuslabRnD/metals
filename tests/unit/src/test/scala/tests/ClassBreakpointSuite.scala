@@ -173,12 +173,12 @@ class ClassBreakpointSuite extends FunSuite {
     test(name) {
       val buffers = Buffers()
       val buildTargets = new BuildTargets(_ => None)
-      val selector = new ScalaVersionSelector(
+      val selector = ScalaVersionSelector(
         () => UserConfiguration(fallbackScalaVersion = Some(scalaVersion)),
         buildTargets
       )
       val trees = new Trees(buildTargets, buffers, selector)
-      val classFinder = new ClassFinder(trees)
+      val classFinder = ClassFinder(trees)
       val filename: String = "Main.scala"
       val path = AbsolutePath(Paths.get(filename))
       val sourceText = original.replace(">>", "  ")

@@ -23,8 +23,8 @@ import org.eclipse.lsp4j.Location
 import org.eclipse.lsp4j.MessageType
 import org.eclipse.lsp4j.Range
 
-class NewFileProvider(
-    workspace: AbsolutePath,
+final case class NewFileProvider(
+    workspace: () => AbsolutePath,
     client: MetalsLanguageClient,
     packageProvider: PackageProvider,
     focusedDocument: () => Option[AbsolutePath]
@@ -139,10 +139,10 @@ class NewFileProvider(
       name: String,
       kind: NewFileType
   ): Future[(AbsolutePath, Range)] = {
-    val path = directory.getOrElse(workspace).resolve(name + ".scala")
+    val path = directory.getOrElse(workspace()).resolve(name + ".scala")
     //name can be actually be "foo/Name", where "foo" is a folder to create
     val className = Identifier.backtickWrap(
-      directory.getOrElse(workspace).resolve(name).filename
+      directory.getOrElse(workspace()).resolve(name).filename
     )
     val template = kind match {
       case CaseClass => caseClassTemplate(className)
@@ -184,7 +184,7 @@ class NewFileProvider(
       name: String,
       extension: String
   ): Future[(AbsolutePath, Range)] = {
-    val path = directory.getOrElse(workspace).resolve(name + extension)
+    val path = directory.getOrElse(workspace()).resolve(name + extension)
     createFileAndWriteText(path, NewFileTemplate.empty)
   }
 

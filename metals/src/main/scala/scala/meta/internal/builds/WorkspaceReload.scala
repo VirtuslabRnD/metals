@@ -15,13 +15,13 @@ import scala.meta.io.AbsolutePath
 /**
  * Class meant to help with the faciliation of reloading the bsp build.
  */
-final class WorkspaceReload(
-    workspace: AbsolutePath,
+final case class WorkspaceReload(
+    workspace: () => AbsolutePath,
     languageClient: MetalsLanguageClient,
     tables: Tables
 ) {
 
-  private val notification = tables.dismissedNotifications.ImportChanges
+  private def notification = tables.dismissedNotifications.ImportChanges
 
   def oldReloadResult(digest: String): Option[WorkspaceLoadedStatus] = {
     if (tables.dismissedNotifications.ImportChanges.isDismissed) {
@@ -38,7 +38,7 @@ final class WorkspaceReload(
       status: Status,
       buildTool: BuildTool
   ): Unit = {
-    buildTool.digest(workspace).foreach { checksum =>
+    buildTool.digest(workspace()).foreach { checksum =>
       tables.digests.setStatus(checksum, status)
     }
   }

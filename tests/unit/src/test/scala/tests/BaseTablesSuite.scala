@@ -17,7 +17,7 @@ abstract class BaseTablesSuite extends BaseSuite {
     workspace = AbsolutePath(Files.createTempDirectory("metals"))
     time.reset()
     tables = new Tables(
-      workspace,
+      () => workspace,
       time,
       ClientConfiguration.Default()
     )

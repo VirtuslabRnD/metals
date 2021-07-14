@@ -52,7 +52,7 @@ object MetalsTestEnrichments {
   }
   implicit class XtensionTestBuildTargets(wsp: WorkspaceSymbolProvider) {
     def indexWorkspace(dialect: m.Dialect): Unit = {
-      val files = new WorkspaceSources(wsp.workspace)
+      val files = new WorkspaceSources(wsp.workspace())
       for {
         source <- files.all
         if source.isScalaOrJava

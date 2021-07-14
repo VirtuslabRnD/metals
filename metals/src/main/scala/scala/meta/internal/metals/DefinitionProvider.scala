@@ -42,8 +42,8 @@ import org.eclipse.lsp4j.TextDocumentPositionParams
  * - source: dirty buffer -> snapshot
  * - destination: snapshot -> dirty buffer
  */
-final class DefinitionProvider(
-    workspace: AbsolutePath,
+final case class DefinitionProvider(
+    workspace: () => AbsolutePath,
     mtags: Mtags,
     buffers: Buffers,
     index: GlobalSymbolIndex,
@@ -56,7 +56,7 @@ final class DefinitionProvider(
     scalaVersionSelector: ScalaVersionSelector
 )(implicit ec: ExecutionContext) {
 
-  val destinationProvider = new DestinationProvider(
+  private val destinationProvider = DestinationProvider(
     index,
     buffers,
     mtags,
@@ -247,11 +247,11 @@ case class DefinitionDestination(
     }
 }
 
-class DestinationProvider(
+case class DestinationProvider(
     index: GlobalSymbolIndex,
     buffers: Buffers,
     mtags: Mtags,
-    workspace: AbsolutePath,
+    workspace: () => AbsolutePath,
     semanticdbsFallback: Option[Semanticdbs],
     trees: Trees,
     buildTargets: BuildTargets
@@ -334,7 +334,7 @@ class DestinationProvider(
   ): Option[DefinitionDestination] = {
     definition(symbol, allowedBuildTargets).map { defn =>
       val destinationDoc = bestTextDocument(defn)
-      val destinationPath = defn.path.toFileOnDisk(workspace)
+      val destinationPath = defn.path.toFileOnDisk(workspace())
       val destinationDistance =
         buffers.tokenEditDistance(destinationPath, destinationDoc.text, trees)
       DefinitionDestination(

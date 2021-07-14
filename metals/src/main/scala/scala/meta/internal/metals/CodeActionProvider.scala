@@ -10,7 +10,7 @@ import scala.meta.pc.CancelToken
 
 import org.eclipse.{lsp4j => l}
 
-final class CodeActionProvider(
+final case class CodeActionProvider(
     compilers: Compilers,
     buffers: Buffers,
     buildTargets: BuildTargets,
@@ -21,12 +21,14 @@ final class CodeActionProvider(
 )(implicit ec: ExecutionContext) {
 
   private val extractMemberAction = new ExtractRenameMember(buffers, trees)
+  private val createNewSymbolActions = new CreateNewSymbol()
+  private val stringActions = new StringActions(buffers, trees)
 
-  private val allActions: List[CodeAction] = List(
+  private def allActions(): List[CodeAction] = List(
     new ImplementAbstractMembers(compilers),
     new ImportMissingSymbol(compilers),
-    new CreateNewSymbol(),
-    new StringActions(buffers, trees),
+    createNewSymbolActions,
+    stringActions,
     extractMemberAction,
     new SourceOrganizeImports(
       scalafixProvider,
@@ -56,7 +58,7 @@ final class CodeActionProvider(
         case None => true
       }
 
-    val actions = allActions.collect {
+    val actions = allActions().collect {
       case action if isRequestedKind(action) => action.contribute(params, token)
     }
 

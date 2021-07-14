@@ -7,7 +7,7 @@ import scala.meta.io.AbsolutePath
 
 import org.eclipse.{lsp4j => l}
 
-final class CodeLensProvider(
+final case class CodeLensProvider(
     codeLensProviders: List[CodeLens],
     semanticdbs: Semanticdbs,
     stacktraceAnalyzer: StacktraceAnalyzer

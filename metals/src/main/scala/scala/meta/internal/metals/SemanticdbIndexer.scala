@@ -17,12 +17,12 @@ import scala.meta.io.AbsolutePath
 import ch.epfl.scala.bsp4j.ScalacOptionsResult
 import com.google.protobuf.InvalidProtocolBufferException
 
-class SemanticdbIndexer(
+final case class SemanticdbIndexer(
     referenceProvider: ReferenceProvider,
     implementationProvider: ImplementationProvider,
     implicitDecorator: SyntheticsDecorationProvider,
     buildTargets: BuildTargets,
-    workspace: AbsolutePath
+    workspace: () => AbsolutePath
 ) {
 
   def onScalacOptions(scalacOptions: ScalacOptionsResult): Unit = {
@@ -95,7 +95,7 @@ class SemanticdbIndexer(
       if (file.isSemanticdb) {
         try {
           val doc = TextDocuments.parseFrom(Files.readAllBytes(file))
-          SemanticdbClasspath.toScala(workspace, AbsolutePath(file)).foreach {
+          SemanticdbClasspath.toScala(workspace(), AbsolutePath(file)).foreach {
             scalaSourceFile =>
               referenceProvider.onChange(doc, scalaSourceFile)
               implementationProvider.onChange(doc, scalaSourceFile)

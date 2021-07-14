@@ -14,7 +14,7 @@ import org.eclipse.lsp4j.MessageActionItem
  * Helper class to find a previously selected build tool or to facilitate the
  *     choosing of the tool.
  */
-final class BuildToolSelector(
+final case class BuildToolSelector(
     languageClient: MetalsLanguageClient,
     tables: Tables
 )(implicit ec: ExecutionContext) {

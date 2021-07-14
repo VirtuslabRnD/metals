@@ -23,10 +23,10 @@ import scalafix.interfaces.Scalafix
 import scalafix.interfaces.ScalafixEvaluation
 import scalafix.interfaces.ScalafixFileEvaluationError
 
-case class ScalafixProvider(
+class ScalafixProvider(
     buffers: Buffers,
     userConfig: () => UserConfiguration,
-    workspace: AbsolutePath,
+    workspace: () => AbsolutePath,
     embedded: Embedded,
     statusBar: StatusBar,
     compilations: Compilations,
@@ -164,7 +164,7 @@ case class ScalafixProvider(
   }
 
   private def scalafixConf: Option[Path] = {
-    val defaultLocation = workspace.resolve(".scalafix.conf")
+    val defaultLocation = workspace().resolve(".scalafix.conf")
     userConfig().scalafixConfigPath match {
       case Some(path) if !path.isFile && defaultLocation.isFile =>
         languageClient.showMessage(
@@ -222,7 +222,7 @@ case class ScalafixProvider(
         .withConfig(scalafixConf.asJava)
         .withRules(List(organizeImportRuleName).asJava)
         .withPaths(List(file.toNIO).asJava)
-        .withSourceroot(workspace.toNIO)
+        .withSourceroot(workspace().toNIO)
         .withScalacOptions(Collections.singletonList(scalacOption))
         .evaluate()
     }

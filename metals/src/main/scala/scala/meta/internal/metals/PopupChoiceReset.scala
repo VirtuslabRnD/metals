@@ -12,8 +12,8 @@ import org.eclipse.lsp4j.MessageActionItem
 import org.eclipse.lsp4j.MessageType
 import org.eclipse.lsp4j.ShowMessageRequestParams
 
-class PopupChoiceReset(
-    workspace: AbsolutePath,
+final case class PopupChoiceReset(
+    workspace: () => AbsolutePath,
     tables: Tables,
     languageClient: MetalsLanguageClient,
     doctor: Doctor,
@@ -35,7 +35,7 @@ class PopupChoiceReset(
       scribe.info("Resetting build server selection.")
       (for {
         didChange <- bspConnector.switchBuildServer(
-          workspace,
+          workspace(),
           slowConnect
         )
         if didChange

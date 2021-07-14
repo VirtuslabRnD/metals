@@ -36,7 +36,7 @@ import org.eclipse.lsp4j.TextDocumentPositionParams
 
 final class ImplementationProvider(
     semanticdbs: Semanticdbs,
-    workspace: AbsolutePath,
+    workspace: () => AbsolutePath,
     index: GlobalSymbolIndex,
     buildTargets: BuildTargets,
     buffer: Buffers,
@@ -78,7 +78,7 @@ final class ImplementationProvider(
         parentImplLocationPairs ++= parentsFromSignature(
           symbolInfo.symbol,
           symbolInfo.signature,
-          Some(workspace.resolve(document.uri))
+          Some(workspace().resolve(document.uri))
         )
       }
     }
@@ -277,7 +277,7 @@ final class ImplementationProvider(
     for {
       symbol <- matchingSymbol
       parentDoc <- parentTextDocument
-      source = workspace.resolve(parentDoc.uri)
+      source = workspace().resolve(parentDoc.uri)
       implOccurrence <- findDefOccurrence(
         parentDoc,
         symbol,

@@ -14,17 +14,17 @@ import scala.meta.io.RelativePath
 /**
  * Reads SemanticDBs from disk that are produces by the semanticdb-scalac compiler plugin.
  */
-final class FileSystemSemanticdbs(
+final case class FileSystemSemanticdbs(
     buildTargets: BuildTargets,
     charset: Charset,
-    mainWorkspace: AbsolutePath,
+    mainWorkspace: () => AbsolutePath,
     fingerprints: Md5Fingerprints
 ) extends Semanticdbs {
 
   override def textDocument(file: AbsolutePath): TextDocumentLookup = {
     if (
       !file.toLanguage.isScala ||
-      file.toNIO.getFileSystem != mainWorkspace.toNIO.getFileSystem
+      file.toNIO.getFileSystem != mainWorkspace().toNIO.getFileSystem
     ) {
       TextDocumentLookup.NotFound(file)
     } else {

@@ -51,7 +51,7 @@ import org.eclipse.lsp4j.{Position => LspPosition}
  * build targets can have different classpaths and compiler settings.
  */
 class Compilers(
-    workspace: AbsolutePath,
+    workspace: () => AbsolutePath,
     config: ClientConfiguration,
     userConfig: () => UserConfiguration,
     ammonite: () => Ammonite,
@@ -132,7 +132,7 @@ class Compilers(
               Try(
                 StandaloneSymbolSearch(
                   scalaVersion,
-                  workspace,
+                  workspace(),
                   buffers,
                   isExcludedPackage,
                   userConfig,
@@ -251,7 +251,7 @@ class Compilers(
         "-Ypresentation-debug",
         "-Ypresentation-verbose",
         "-Ypresentation-log",
-        workspace.resolve(Directories.pc).toString()
+        workspace().resolve(Directories.pc).toString()
       )
     } else {
       Nil
@@ -420,7 +420,7 @@ class Compilers(
           s"${config.icons.sync}Loading worksheet presentation compiler"
         ) {
           val worksheetSearch = new StandaloneSymbolSearch(
-            workspace,
+            workspace(),
             classpath.map(AbsolutePath(_)),
             sources.map(AbsolutePath(_)),
             buffers,
@@ -444,7 +444,7 @@ class Compilers(
             classpath,
             StandaloneSymbolSearch(
               scalaVersion,
-              workspace,
+              workspace(),
               buffers,
               sources,
               classpath,
@@ -578,7 +578,7 @@ class Compilers(
   ): PresentationCompiler =
     pc.withSearch(search)
       .withExecutorService(ec)
-      .withWorkspace(workspace.toNIO)
+      .withWorkspace(workspace().toNIO)
       .withScheduledExecutorService(sh)
       .withConfiguration(
         initializeParams

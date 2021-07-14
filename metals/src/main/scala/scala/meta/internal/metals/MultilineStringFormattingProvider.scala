@@ -14,7 +14,7 @@ import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextEdit
 
-class MultilineStringFormattingProvider(
+final case class MultilineStringFormattingProvider(
     buffers: Buffers,
     trees: Trees,
     userConfig: () => UserConfiguration

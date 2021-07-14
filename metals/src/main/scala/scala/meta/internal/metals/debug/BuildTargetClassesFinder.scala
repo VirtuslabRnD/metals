@@ -14,7 +14,7 @@ import scala.meta.io.AbsolutePath
 import ch.epfl.scala.bsp4j.BuildTarget
 import ch.epfl.scala.{bsp4j => b}
 
-class BuildTargetClassesFinder(
+final case class BuildTargetClassesFinder(
     buildTargets: BuildTargets,
     buildTargetClasses: BuildTargetClasses,
     index: OnDemandSymbolIndex

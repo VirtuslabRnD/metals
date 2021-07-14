@@ -21,7 +21,7 @@ import org.eclipse.lsp4j.ExecuteCommandParams
 import org.eclipse.lsp4j.Location
 import org.eclipse.lsp4j.Position
 
-class Supermethods(
+final case class Supermethods(
     client: MetalsLanguageClient,
     definitionProvider: DefinitionProvider,
     implementationProvider: ImplementationProvider

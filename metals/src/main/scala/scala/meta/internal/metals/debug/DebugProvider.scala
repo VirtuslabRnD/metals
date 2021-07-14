@@ -56,8 +56,8 @@ import org.eclipse.lsp4j.MessageActionItem
 import org.eclipse.lsp4j.MessageParams
 import org.eclipse.lsp4j.MessageType
 
-class DebugProvider(
-    workspace: AbsolutePath,
+final case class DebugProvider(
+    workspace: () => AbsolutePath,
     definitionProvider: DefinitionProvider,
     buildServer: () => Option[BuildServerConnection],
     buildTargets: BuildTargets,
@@ -73,7 +73,7 @@ class DebugProvider(
     semanticdbs: Semanticdbs
 ) {
 
-  lazy val buildTargetClassesFinder = new BuildTargetClassesFinder(
+  private lazy val buildTargetClassesFinder = BuildTargetClassesFinder(
     buildTargets,
     buildTargetClasses,
     index
@@ -188,7 +188,7 @@ class DebugProvider(
     val envFromFile: Future[List[String]] =
       envFile
         .map { file =>
-          val path = AbsolutePath(file)(workspace)
+          val path = AbsolutePath(file)(workspace())
           DotEnvFileParser
             .parse(path)
             .map(_.map { case (key, value) => s"$key=$value" }.toList)

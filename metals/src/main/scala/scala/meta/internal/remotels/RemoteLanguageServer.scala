@@ -25,7 +25,7 @@ import com.google.gson.JsonPrimitive
 import org.eclipse.lsp4j.Location
 import org.eclipse.{lsp4j => l}
 
-class RemoteLanguageServer(
+final case class RemoteLanguageServer(
     workspace: () => AbsolutePath,
     userConfig: () => UserConfiguration,
     serverConfig: MetalsServerConfig,

@@ -16,7 +16,7 @@ import org.eclipse.lsp4j.MarkupContent
 import org.eclipse.lsp4j.MarkupKind
 import org.eclipse.lsp4j.Position
 
-class DecorationWorksheetPublisher() extends WorksheetPublisher {
+case object DecorationWorksheetPublisher extends WorksheetPublisher {
 
   private val commentHeader = " // "
 

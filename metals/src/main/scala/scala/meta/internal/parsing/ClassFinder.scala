@@ -9,7 +9,7 @@ import scala.meta.io.AbsolutePath
 
 import org.eclipse.{lsp4j => l}
 
-class ClassFinder(trees: Trees) {
+final case class ClassFinder(trees: Trees) {
 
   def findClass(path: AbsolutePath, pos: l.Position): Option[String] = {
     for {

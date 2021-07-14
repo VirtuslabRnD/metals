@@ -18,7 +18,7 @@ import org.eclipse.{lsp4j => l}
  *  If the document doesn't parse, we fall back to the latest
  *  known snapshot of the document, if present.
  */
-class DocumentSymbolProvider(trees: Trees) {
+final case class DocumentSymbolProvider(trees: Trees) {
 
   private val supportsHierarchicalDocumentSymbols = new AtomicBoolean(true)
 
