@@ -284,7 +284,6 @@ class MetalsLanguageServer(
     )
     embedded = register(
       new Embedded(
-        clientConfig.icons,
         statusBar,
         () => userConfig
       )

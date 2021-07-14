@@ -26,7 +26,6 @@ import mdoc.interfaces.Mdoc
  * - mdoc
  */
 final class Embedded(
-    icons: Icons,
     statusBar: StatusBar,
     userConfig: () => UserConfiguration
 ) extends Cancelable {
