@@ -56,7 +56,6 @@ import scala.meta.internal.mtags._
 import scala.meta.internal.parsing.ClassFinder
 import scala.meta.internal.parsing.DocumentSymbolProvider
 import scala.meta.internal.parsing.FoldingRangeProvider
-import scala.meta.internal.parsing.TokenEditDistance
 import scala.meta.internal.parsing.Trees
 import scala.meta.internal.remotels.RemoteLanguageServer
 import scala.meta.internal.rename.RenameProvider
@@ -68,7 +67,6 @@ import scala.meta.internal.worksheets.WorksheetProvider
 import scala.meta.internal.worksheets.WorkspaceEditWorksheetPublisher
 import scala.meta.io.AbsolutePath
 import scala.meta.parsers.ParseException
-import scala.meta.pc.CancelToken
 import scala.meta.tokenizers.TokenizeException
 
 import ch.epfl.scala.bsp4j.CompileReport
@@ -84,6 +82,8 @@ import org.eclipse.{lsp4j => l}
 import scala.meta.ls.handlers.DidOpenHandler
 import scala.meta.ls.handlers.MetalsDidFocusTextDocumentHandler
 import scala.meta.ls.handlers.WorkspaceDidChangeConfigurationHandler
+import scala.meta.ls.handlers.TextDocumentReferencesHandler
+import scala.meta.ls.handlers.TextDocumentDefinitionHandler
 
 class MetalsLanguageServer(
     ec: ExecutionContextExecutorService,
@@ -1162,13 +1162,33 @@ class MetalsLanguageServer(
       .ignoreValue
   }
 
+  val textDocumentReferencesHandler = TextDocumentReferencesHandler(
+    time,
+    referencesProvider,
+    clientConfig,
+    compilations,
+    buffers,
+    trees,
+    statusBar,
+    executionContext
+  )
+
+  val textDocumentDefinitionHandler = TextDocumentDefinitionHandler(
+    semanticdbs,
+    executionContext,
+    definitionProvider,
+    textDocumentReferencesHandler,
+    warnings,
+    timerProvider,
+    clientConfig,
+    interactiveSemanticdbs
+  )
+
   @JsonRequest("textDocument/definition")
   def definition(
       position: TextDocumentPositionParams
   ): CompletableFuture[util.List[Location]] =
-    CancelTokens.future { token =>
-      definitionOrReferences(position, token).map(_.locations)
-    }
+    textDocumentDefinitionHandler(position)
 
   @JsonRequest("textDocument/typeDefinition")
   def typeDefinition(
@@ -1269,73 +1289,8 @@ class MetalsLanguageServer(
   def references(
       params: ReferenceParams
   ): CompletableFuture[util.List[Location]] =
-    CancelTokens { _ => referencesResult(params).locations.asJava }
+    textDocumentReferencesHandler(params)
 
-  // Triggers a cascade compilation and tries to find new references to a given symbol.
-  // It's not possible to stream reference results so if we find new symbols we notify the
-  // user to run references again to see updated results.
-  private def compileAndLookForNewReferences(
-      params: ReferenceParams,
-      result: ReferencesResult
-  ): Unit = {
-    val path = params.getTextDocument.getUri.toAbsolutePath
-    val old = path.toInputFromBuffers(buffers)
-    compilations.cascadeCompileFiles(Seq(path)).foreach { _ =>
-      val newBuffer = path.toInputFromBuffers(buffers)
-      val newParams: Option[ReferenceParams] =
-        if (newBuffer.text == old.text) Some(params)
-        else {
-          val edit = TokenEditDistance(old, newBuffer, trees)
-          edit
-            .toRevised(
-              params.getPosition.getLine,
-              params.getPosition.getCharacter
-            )
-            .foldResult(
-              pos => {
-                params.getPosition.setLine(pos.startLine)
-                params.getPosition.setCharacter(pos.startColumn)
-                Some(params)
-              },
-              () => Some(params),
-              () => None
-            )
-        }
-      newParams match {
-        case None =>
-        case Some(p) =>
-          val newResult = referencesProvider.references(p)
-          val diff = newResult.locations.length - result.locations.length
-          val isSameSymbol = newResult.symbol == result.symbol
-          if (isSameSymbol && diff > 0) {
-            import scala.meta.internal.semanticdb.Scala._
-            val name = newResult.symbol.desc.name.value
-            val message =
-              s"Found new symbol references for '$name', try running again."
-            scribe.info(message)
-            statusBar
-              .addMessage(clientConfig.icons.info + message)
-          }
-      }
-    }
-  }
-  def referencesResult(params: ReferenceParams): ReferencesResult = {
-    val timer = new Timer(time)
-    val result = referencesProvider.references(params)
-    if (clientConfig.initialConfig.statistics.isReferences) {
-      if (result.symbol.isEmpty) {
-        scribe.info(s"time: found 0 references in $timer")
-      } else {
-        scribe.info(
-          s"time: found ${result.locations.length} references to symbol '${result.symbol}' in $timer"
-        )
-      }
-    }
-    if (result.symbol.nonEmpty) {
-      compileAndLookForNewReferences(params, result)
-    }
-    result
-  }
   @JsonRequest("textDocument/completion")
   def completion(params: CompletionParams): CompletableFuture[CompletionList] =
     CancelTokens.future { token => compilers.completions(params, token) }
@@ -1904,103 +1859,6 @@ class MetalsLanguageServer(
       buildServerManager.slowConnectToBuildServer(forceImport = false)
     } else {
       Future.successful(BuildChange.None)
-    }
-  }
-
-  /**
-   * Returns the the definition location or reference locations of a symbol
-   * at a given text document position.
-   * If the symbol represents the definition itself, this method returns
-   * the reference locations, otherwise this returns definition location.
-   * https://github.com/scalameta/metals/issues/755
-   */
-  def definitionOrReferences(
-      positionParams: TextDocumentPositionParams,
-      token: CancelToken = EmptyCancelToken,
-      definitionOnly: Boolean = false
-  ): Future[DefinitionResult] = {
-    val source = positionParams.getTextDocument.getUri.toAbsolutePath
-    if (source.isScalaFilename) {
-      val semanticDBDoc =
-        semanticdbs.textDocument(source).documentIncludingStale
-      (for {
-        doc <- semanticDBDoc
-        positionOccurrence = definitionProvider.positionOccurrence(
-          source,
-          positionParams.getPosition,
-          doc
-        )
-        occ <- positionOccurrence.occurrence
-      } yield occ) match {
-        case Some(occ) =>
-          if (occ.role.isDefinition && !definitionOnly) {
-            val refParams = new ReferenceParams(
-              positionParams.getTextDocument(),
-              positionParams.getPosition(),
-              new ReferenceContext(false)
-            )
-            val result = referencesResult(refParams)
-            if (result.locations.isEmpty) {
-              // Fallback again to the original behavior that returns
-              // the definition location itself if no reference locations found,
-              // for avoiding the confusing messages like "No definition found ..."
-              definitionResult(positionParams, token)
-            } else {
-              Future.successful(
-                DefinitionResult(
-                  locations = result.locations.asJava,
-                  symbol = result.symbol,
-                  definition = None,
-                  semanticdb = None
-                )
-              )
-            }
-          } else {
-            definitionResult(positionParams, token)
-          }
-        case None =>
-          if (semanticDBDoc.isEmpty) {
-            warnings.noSemanticdb(source)
-          }
-          // Even if it failed to retrieve the symbol occurrence from semanticdb,
-          // try to find its definitions from presentation compiler.
-          definitionResult(positionParams, token)
-      }
-    } else {
-      // Ignore non-scala files.
-      Future.successful(DefinitionResult.empty)
-    }
-  }
-
-  /**
-   * Returns textDocument/definition in addition to the resolved symbol.
-   *
-   * The resolved symbol is used for testing purposes only.
-   */
-  def definitionResult(
-      position: TextDocumentPositionParams,
-      token: CancelToken = EmptyCancelToken
-  ): Future[DefinitionResult] = {
-    val source = position.getTextDocument.getUri.toAbsolutePath
-    if (source.isScalaFilename) {
-      val result =
-        timerProvider.timedThunk(
-          "definition",
-          clientConfig.initialConfig.statistics.isDefinition
-        )(
-          definitionProvider.definition(source, position, token)
-        )
-      result.onComplete {
-        case Success(value) =>
-          // Record what build target this dependency source (if any) was jumped from,
-          // needed to know what classpath to compile the dependency source with.
-          interactiveSemanticdbs.didDefinition(source, value)
-        case _ =>
-      }
-      result
-    } else {
-      // Ignore non-scala files.
-      Future.successful(DefinitionResult.empty)
     }
   }
 
