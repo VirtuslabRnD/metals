@@ -22,6 +22,8 @@ import ch.epfl.scala.bsp4j.ScalaBuildTarget
 import ch.epfl.scala.bsp4j.ScalacOptionsItem
 import ch.epfl.scala.bsp4j.ScalacOptionsResult
 import ch.epfl.scala.bsp4j.WorkspaceBuildTargetsResult
+import org.eclipse.{lsp4j => l}
+import scala.meta.inputs.Input
 
 /**
  * In-memory cache for looking up build server metadata.
@@ -64,6 +66,12 @@ final class BuildTargets(
     data.iterator.flatMap(_.sourceItemsToBuildTarget.iterator)
   def scalacOptions: Iterable[ScalacOptionsItem] =
     data.iterable.flatMap(_.scalacTargetInfo.values)
+
+  def actualSource(path: AbsolutePath): Option[BuildTargets.MappedSource] =
+    data.iterator
+      .flatMap(_.actualSources.get(path).iterator)
+      .toStream
+      .headOption
 
   def allBuildTargetIds: Seq[BuildTargetIdentifier] =
     all.toSeq.map(_.info.getId())
@@ -505,6 +513,9 @@ object BuildTargets {
         sourceItem: AbsolutePath
     ): Option[Iterable[BuildTargetIdentifier]]
 
+    def actualSources
+        : scala.collection.Map[AbsolutePath, BuildTargets.MappedSource]
+
     def all: Iterator[ScalaTarget]
     def allScalaTargets: Iterator[(BuildTargets.Data, ScalaTarget)]
     def scalaTarget(id: BuildTargetIdentifier): Option[ScalaTarget]
@@ -531,6 +542,7 @@ object BuildTargets {
         sourcesJar: AbsolutePath,
         target: BuildTargetIdentifier
     ): Unit
+    def addMappedSource(path: AbsolutePath, mapped: MappedSource): Unit
     def resetConnections(
         idToConn: List[(BuildTargetIdentifier, BuildServerConnection)]
     ): Unit
@@ -564,9 +576,18 @@ object BuildTargets {
     val targetToConnection =
       new mutable.HashMap[BuildTargetIdentifier, BuildServerConnection]
 
+    private val sourceBuildTargetsCache =
+      new util.concurrent.ConcurrentHashMap[AbsolutePath, Option[
+        Iterable[BuildTargetIdentifier]
+      ]]
+
+    val actualSources =
+      TrieMap.empty[AbsolutePath, BuildTargets.MappedSource]
+
     def reset(): Unit = {
       sourceItemsToBuildTarget.values.foreach(_.clear())
       sourceItemsToBuildTarget.clear()
+      sourceBuildTargetsCache.clear()
       buildTargetInfo.clear()
       scalacTargetInfo.clear()
       inverseDependencies.clear()
@@ -588,6 +609,7 @@ object BuildTargets {
         new ConcurrentLinkedQueue()
       )
       queue.add(buildTarget)
+      sourceBuildTargetsCache.clear()
     }
 
     def linkSourceFile(
@@ -623,6 +645,9 @@ object BuildTargets {
       inverseDependencySources(sourcesJar) = acc + target
     }
 
+    def addMappedSource(path: AbsolutePath, mapped: MappedSource): Unit =
+      actualSources(path) = mapped
+
     def resetConnections(
         idToConn: List[(BuildTargetIdentifier, BuildServerConnection)]
     ): Unit = {
@@ -636,13 +661,20 @@ object BuildTargets {
 
     def sourceBuildTargets(
         sourceItem: AbsolutePath
-    ): Option[Iterable[BuildTargetIdentifier]] =
-      sourceItemsToBuildTarget.collectFirst {
-        case (source, buildTargets)
-            if sourceItem.toNIO.getFileSystem == source.toNIO.getFileSystem &&
-              sourceItem.toNIO.startsWith(source.toNIO) =>
-          buildTargets.asScala
-      }
+    ): Option[Iterable[BuildTargetIdentifier]] = {
+      val valueOrNull = sourceBuildTargetsCache.get(sourceItem)
+      if (valueOrNull == null) {
+        val value = sourceItemsToBuildTarget.collectFirst {
+          case (source, buildTargets)
+              if sourceItem.toNIO.getFileSystem == source.toNIO.getFileSystem &&
+                sourceItem.toNIO.startsWith(source.toNIO) =>
+            buildTargets.asScala
+        }
+        val prevOrNull = sourceBuildTargetsCache.putIfAbsent(sourceItem, value)
+        if (prevOrNull == null) value
+        else prevOrNull
+      } else valueOrNull
+    }
 
     def all: Iterator[ScalaTarget] =
       for {
@@ -676,6 +708,14 @@ object BuildTargets {
       }
     }
 
+  }
+
+  trait MappedSource {
+    def path: AbsolutePath
+    def update(
+        content: String,
+        pos: l.Position
+    ): (Input.VirtualFile, l.Position, AdjustLspData)
   }
 
 }
