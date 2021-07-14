@@ -12,7 +12,6 @@ import scala.{meta => m}
 import scala.meta.inputs.Input
 import scala.meta.internal.metals.Buffers
 import scala.meta.internal.metals.ClientConfiguration
-import scala.meta.internal.metals.Diagnostics
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.metals.UserConfiguration
 import scala.meta.internal.metap.PrinterSymtab
@@ -41,7 +40,6 @@ final case class SyntheticsDecorationProvider(
     client: DecorationClient,
     fingerprints: Md5Fingerprints,
     charset: Charset,
-    diagnostics: Diagnostics,
     focusedDocument: () => Option[AbsolutePath],
     clientConfig: ClientConfiguration,
     userConfig: () => UserConfiguration,
