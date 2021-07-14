@@ -624,10 +624,8 @@ class MetalsLanguageServer(
           buffers,
           () => userConfig,
           () => workspace,
-          embedded,
           statusBar,
           compilations,
-          clientConfig.icons(),
           languageClient,
           buildTargets,
           buildClient

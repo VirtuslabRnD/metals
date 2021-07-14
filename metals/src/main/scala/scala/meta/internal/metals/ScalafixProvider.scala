@@ -27,10 +27,8 @@ class ScalafixProvider(
     buffers: Buffers,
     userConfig: () => UserConfiguration,
     workspace: () => AbsolutePath,
-    embedded: Embedded,
     statusBar: StatusBar,
     compilations: Compilations,
-    icons: Icons,
     languageClient: MetalsLanguageClient,
     buildTargets: BuildTargets,
     buildClient: MetalsBuildClient
