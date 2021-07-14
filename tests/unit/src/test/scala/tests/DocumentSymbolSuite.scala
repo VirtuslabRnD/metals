@@ -12,6 +12,7 @@ import scala.meta.internal.parsing.Trees
 import scala.meta.internal.{semanticdb => s}
 
 import tests.MetalsTestEnrichments._
+import scala.meta.internal.io.PathIO
 
 /**
  * Checks the positions of document symbols inside a document
@@ -31,7 +32,8 @@ abstract class DocumentSymbolSuite(
         { () =>
           val buffers = Buffers()
           buffers.put(file.file, file.code)
-          val buildTargets = new BuildTargets(_ => None)
+          val buildTargets =
+            new BuildTargets(() => PathIO.workingDirectory, None, _ => None)
           val selector =
             ScalaVersionSelector(
               () =>

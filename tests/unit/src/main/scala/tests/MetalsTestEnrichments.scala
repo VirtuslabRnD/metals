@@ -97,16 +97,18 @@ object MetalsTestEnrichments {
       val data = gson.toJsonTree(scalaTarget)
       buildTarget.setData(data)
       val result = new WorkspaceBuildTargetsResult(List(buildTarget).asJava)
-      wsp.buildTargets.addWorkspaceBuildTargets(result)
+      val data0 = m.internal.metals.BuildTargets.Data.create()
+      data0.addWorkspaceBuildTargets(result)
       val item = new ScalacOptionsItem(
         bti,
         Nil.asJava,
         libraries.flatMap(_.classpath.entries).map(_.toURI.toString).asJava,
         ""
       )
-      wsp.buildTargets.addScalacOptions(
+      data0.addScalacOptions(
         new ScalacOptionsResult(List(item).asJava)
       )
+      wsp.buildTargets.addData(data0)
     }
   }
   implicit class XtensionTestLspRange(range: l.Range) {

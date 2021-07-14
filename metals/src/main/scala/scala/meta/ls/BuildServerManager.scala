@@ -59,7 +59,7 @@ final class BuildServerManager(
     setBspSession: Option[BspSession] => Unit,
     statusBar: StatusBar,
     doctor: Doctor,
-    buildTargets: BuildTargets,
+    buildTargetsData: BuildTargets.WritableData,
     diagnostics: Diagnostics,
     bloopServers: BloopServers
 ) extends Cancelable {
@@ -243,7 +243,7 @@ final class BuildServerManager(
       case Some(session) =>
         setBspSession(None)
         diagnostics.reset()
-        buildTargets.resetConnections(List.empty)
+        buildTargetsData.resetConnections(List.empty)
         session.shutdown()
     }
   }
@@ -268,7 +268,7 @@ final class BuildServerManager(
             bspBuild.build.workspaceBuildTargets.getTargets().asScala
           targets.map(t => (t.getId(), bspBuild.connection))
         }
-        buildTargets.resetConnections(idToConnection)
+        buildTargetsData.resetConnections(idToConnection)
         lastImportedBuilds0 = bspBuilds.map(_.build)
       }
       _ <- indexer.profiledIndexWorkspace(() => doctor.check())
