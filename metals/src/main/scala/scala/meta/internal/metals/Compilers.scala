@@ -561,7 +561,7 @@ class Compilers(
         buildTargets
           .sbtAutoImports(path)
           .map(
-            SbtBuildTool.sbtInputPosAdjustment(input, _, uri, position)
+            SbtBuildTool.sbtInputPosAdjustment(input, _, position)
           )
       } else if (
         path.isWorksheet && ScalaVersions.isScala3Version(scalaVersion)
