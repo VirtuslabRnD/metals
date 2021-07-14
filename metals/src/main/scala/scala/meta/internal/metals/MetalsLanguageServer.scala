@@ -169,7 +169,7 @@ class MetalsLanguageServer(
   val tables = register(new Tables(() => workspace, time, clientConfig))
 
   val buildTargets: BuildTargets =
-    BuildTargets.withAmmonite(() => workspace, Some(tables), () => ammonite)
+    new BuildTargets(() => workspace, Some(tables))
   buildTargets.addData(mainBuildTargetsData)
   private val buildTargetClasses = new BuildTargetClasses(buildTargets, threads)
 
