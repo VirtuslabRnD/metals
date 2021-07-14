@@ -486,16 +486,15 @@ object WorksheetProvider {
 
   def worksheetScala3Adjustments(
       originInput: Input.VirtualFile,
-      uri: String,
+      path: AbsolutePath,
       position: Position
   ): Option[(Input.VirtualFile, Position, AdjustLspData)] = {
-    worksheetScala3Adjustments(originInput, uri.toAbsolutePath).map {
-      case (input, adjust) =>
-        val pos = new Position(
-          position.getLine() + 1,
-          position.getCharacter() + 2
-        )
-        (input, pos, adjust)
+    worksheetScala3Adjustments(originInput, path).map { case (input, adjust) =>
+      val pos = new Position(
+        position.getLine() + 1,
+        position.getCharacter() + 2
+      )
+      (input, pos, adjust)
 
     }
   }

@@ -253,6 +253,13 @@ class MetalsLanguageServer(
   private var fileDecoderProvider: FileDecoderProvider = _
   private var workspaceReload: WorkspaceReload = _
   private var buildToolSelector: BuildToolSelector = _
+
+  private val sourceMapper = scala.meta.ls.SourceMapper(
+    buildTargets,
+    buffers,
+    () => workspace
+  )
+
   def loadedPresentationCompilerCount(): Int =
     compilers.loadedPresentationCompilerCount()
   var tables: Tables = _
@@ -600,7 +607,6 @@ class MetalsLanguageServer(
             () => workspace,
             clientConfig,
             () => userConfig,
-            () => ammonite,
             buildTargets,
             buffers,
             symbolSearch,
@@ -610,7 +616,8 @@ class MetalsLanguageServer(
             Option(params),
             excludedPackageHandler.isExcludedPackage,
             scalaVersionSelector,
-            trees
+            trees,
+            sourceMapper
           )
         )
         debugProvider = new DebugProvider(
@@ -1499,7 +1506,8 @@ class MetalsLanguageServer(
     () => userConfig,
     sh,
     symbolDocs,
-    scalaVersionSelector
+    scalaVersionSelector,
+    sourceMapper
   )
 
   private val buildServerManager: scala.meta.ls.BuildServerManager =
@@ -1570,16 +1578,7 @@ class MetalsLanguageServer(
         case NonFatal(e) =>
           scribe.error("unexpected error during source scanning", e)
       },
-      toIndexSource = path => {
-        if (path.isAmmoniteScript)
-          for {
-            targets <- buildTargets.sourceBuildTargets(path)
-            target <- targets.headOption
-            toIndex <- ammonite.generatedScalaPath(target, path)
-          } yield toIndex
-        else
-          None
-      }
+      toIndexSource = sourceMapper.actualSource
     )
   }
 
