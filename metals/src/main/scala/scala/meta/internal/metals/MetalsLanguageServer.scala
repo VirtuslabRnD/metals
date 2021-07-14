@@ -621,7 +621,6 @@ class MetalsLanguageServer(
           compilations,
           languageClient,
           buildClient,
-          statusBar,
           classFinder,
           definitionIndex,
           stacktraceAnalyzer,
