@@ -79,6 +79,7 @@ import scala.meta.ls.handlers.TextDocumentDefinitionHandler
 import scala.meta.ls.handlers.TextDocumentHoverHandler
 import scala.meta.ls.handlers.WorkspaceSymbolHandler
 import scala.meta.ls.handlers.ExecuteCommandHandler
+import scala.util.Failure
 
 class MetalsLanguageServer(
     ec: ExecutionContextExecutorService,
@@ -398,9 +399,23 @@ class MetalsLanguageServer(
             didCompileTarget(report)
             compilers.didCompile(report)
           },
-          () => treeView,
-          () => worksheetProvider,
-          () => ammonite
+          onBuildTargetDidCompile = { target =>
+            treeView.onBuildTargetDidCompile(target)
+            worksheetProvider.onBuildTargetDidCompile(target)
+          },
+          onBuildTargetDidChangeFunc = { params =>
+            val ammoniteBuildChanged =
+              params.getChanges.asScala.exists(
+                _.getTarget.getUri.isAmmoniteScript
+              )
+            if (ammoniteBuildChanged)
+              ammonite.importBuild().onComplete {
+                case Success(()) =>
+                case Failure(exception) =>
+                  scribe.error("Error re-importing Ammonite build", exception)
+              }
+            ammoniteBuildChanged
+          }
         )
         shellRunner = register(
           new ShellRunner(languageClient, () => userConfig, time, statusBar)

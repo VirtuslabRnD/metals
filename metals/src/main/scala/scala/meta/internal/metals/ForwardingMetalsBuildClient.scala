@@ -5,16 +5,11 @@ import java.util.concurrent.ConcurrentHashMap
 import java.{util => ju}
 
 import scala.collection.concurrent.TrieMap
-import scala.concurrent.ExecutionContext
 import scala.concurrent.Promise
-import scala.util.Failure
-import scala.util.Success
 
 import scala.meta.internal.metals.MetalsEnrichments._
-import scala.meta.internal.metals.ammonite.Ammonite
 import scala.meta.internal.metals.debug.BuildTargetClasses
 import scala.meta.internal.tvp._
-import scala.meta.internal.worksheets.WorksheetProvider
 import scala.meta.io.AbsolutePath
 
 import ch.epfl.scala.bsp4j._
@@ -35,11 +30,9 @@ final class ForwardingMetalsBuildClient(
     statusBar: StatusBar,
     time: Time,
     didCompile: CompileReport => Unit,
-    treeViewProvider: () => TreeViewProvider,
-    worksheetProvider: () => WorksheetProvider,
-    ammonite: () => Ammonite
-)(implicit ec: ExecutionContext)
-    extends MetalsBuildClient
+    onBuildTargetDidCompile: BuildTargetIdentifier => Unit,
+    onBuildTargetDidChangeFunc: b.DidChangeBuildTarget => Boolean
+) extends MetalsBuildClient
     with Cancelable {
 
   private case class Compilation(
@@ -109,15 +102,7 @@ final class ForwardingMetalsBuildClient(
   }
 
   def onBuildTargetDidChange(params: b.DidChangeBuildTarget): Unit = {
-    val ammoniteBuildChanged =
-      params.getChanges.asScala.exists(_.getTarget.getUri.isAmmoniteScript)
-    if (ammoniteBuildChanged)
-      ammonite().importBuild().onComplete {
-        case Success(()) =>
-        case Failure(exception) =>
-          scribe.error("Error re-importing Ammonite build", exception)
-      }
-    else
+    if (!onBuildTargetDidChangeFunc(params))
       scribe.info(params.toString)
   }
 
@@ -192,8 +177,7 @@ final class ForwardingMetalsBuildClient(
               // that target to fix
               // https://github.com/scalameta/metals/issues/846.
               updatedTreeViews.add(target)
-              treeViewProvider().onBuildTargetDidCompile(target)
-              worksheetProvider().onBuildTargetDidCompile(target)
+              onBuildTargetDidCompile(target)
             }
             hasReportedError.remove(target)
           } else {
