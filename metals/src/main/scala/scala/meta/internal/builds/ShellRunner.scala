@@ -19,14 +19,14 @@ import scala.meta.internal.process.SystemProcess
 import scala.meta.io.AbsolutePath
 
 import coursierapi._
+import scala.meta.ls.MetalsThreads
 
 class ShellRunner(
     languageClient: MetalsLanguageClient,
     userConfig: () => UserConfiguration,
     time: Time,
-    statusBar: StatusBar
-)(implicit
-    executionContext: scala.concurrent.ExecutionContext
+    statusBar: StatusBar,
+    threads: MetalsThreads
 ) extends Cancelable {
 
   private val cancelables = new MutableCancelable()
@@ -91,14 +91,14 @@ class ShellRunner(
       )
 
     val result = Promise[Int]
-    taskResponse.asScala.foreach { item =>
+    taskResponse.asScala.foreach({ item =>
       if (item.cancel) {
         if (logInfo)
           scribe.info(s"user cancelled $commandRun")
         result.trySuccess(ExitCodes.Cancel)
         ps.cancel
       }
-    }
+    })(threads.dummyEc)
     cancelables
       .add(() => ps.cancel)
       .add(() => taskResponse.cancel(false))
@@ -108,12 +108,12 @@ class ShellRunner(
       s"Running '$commandRun'",
       processFuture
     )
-    processFuture.map { code =>
+    processFuture.map({ code =>
       taskResponse.cancel(false)
       if (logInfo)
         scribe.info(s"time: ran '$commandRun' in $elapsed")
       result.trySuccess(code)
-    }
+    })(threads.dummyEc)
     result.future
   }
 

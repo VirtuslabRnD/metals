@@ -56,7 +56,7 @@ final class RenameProvider(
     compilations: Compilations,
     clientConfig: ClientConfiguration,
     trees: Trees
-)(implicit executionContext: ExecutionContext) {
+)(executionContext: ExecutionContext) {
 
   private val awaitingSave = new ConcurrentLinkedQueue[() => Unit]
 
@@ -65,6 +65,7 @@ final class RenameProvider(
       token: CancelToken
   ): Future[Option[LSPRange]] = {
     val source = params.getTextDocument.getUri.toAbsolutePath
+    implicit val ec0 = executionContext
     compilations.compilationFinished(source).flatMap { _ =>
       definitionProvider.definition(source, params, token).map { definition =>
         val symbolOccurrence =
@@ -94,6 +95,7 @@ final class RenameProvider(
       token: CancelToken
   ): Future[WorkspaceEdit] = {
     val source = params.getTextDocument.getUri.toAbsolutePath
+    implicit val ec0 = executionContext
     compilations.compilationFinished(source).flatMap { _ =>
       definitionProvider.definition(source, params, token).map { definition =>
         val textParams = new TextDocumentPositionParams(

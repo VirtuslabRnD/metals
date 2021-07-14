@@ -23,7 +23,7 @@ final case class Supermethods(
     client: MetalsLanguageClient,
     definitionProvider: DefinitionProvider,
     implementationProvider: ImplementationProvider
-)(implicit
+)(
     ec: ExecutionContext
 ) {
 
@@ -42,6 +42,7 @@ final case class Supermethods(
         methodSymbols: List[String],
         path: AbsolutePath
     ): Future[Unit] = {
+      implicit val ec0 = ec
       askUserToSelectSuperMethod(methodSymbols)
         .map(
           _.flatMap(findDefinitionLocation(_, path))
@@ -87,6 +88,7 @@ final case class Supermethods(
   private def askUserToSelectSuperMethod(
       methodSymbols: List[String]
   ): Future[Option[String]] = {
+    implicit val ec0 = ec
     client
       .metalsQuickPick(
         MetalsQuickPickParams(

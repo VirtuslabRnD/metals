@@ -68,11 +68,13 @@ final case class DidOpenHandler(
     }
     parseTrees(path).flatMap(_ => syntheticsDecorator.publishSynthetics(path))
     if (path.isDependencySource(workspace())) {
-      CancelTokens { _ =>
-        // publish diagnostics
-        interactiveSemanticdbs.didFocus(path)
-        ()
-      }
+      CancelTokens.future { _ =>
+        Future {
+          // publish diagnostics
+          interactiveSemanticdbs.didFocus(path)
+          ()
+        }(ec)
+      }(ec)
     } else {
       if (path.isAmmoniteScript)
         ammonite.maybeImport(path)

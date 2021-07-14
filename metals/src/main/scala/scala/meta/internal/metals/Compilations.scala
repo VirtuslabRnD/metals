@@ -1,7 +1,6 @@
 package scala.meta.internal.metals
 
 import scala.collection.concurrent.TrieMap
-import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.util.Failure
 import scala.util.Success
@@ -13,6 +12,7 @@ import scala.meta.io.AbsolutePath
 
 import ch.epfl.scala.bsp4j.BuildTargetIdentifier
 import ch.epfl.scala.{bsp4j => b}
+import scala.meta.ls.MetalsThreads
 
 final class Compilations(
     buildTargets: BuildTargets,
@@ -20,20 +20,21 @@ final class Compilations(
     workspace: () => AbsolutePath,
     languageClient: MetalsLanguageClient,
     isCurrentlyFocused: b.BuildTargetIdentifier => Boolean,
-    compileWorksheets: Seq[AbsolutePath] => Future[Unit]
-)(implicit ec: ExecutionContext) {
+    compileWorksheets: Seq[AbsolutePath] => Future[Unit],
+    threads: MetalsThreads
+) {
 
   // we are maintaining a separate queue for cascade compilation since those must happen ASAP
   private val compileBatch =
     new BatchedFunction[
       b.BuildTargetIdentifier,
       Map[BuildTargetIdentifier, b.CompileResult]
-    ](compile)
+    ](compile)(threads.dummyBatchedFunctionEc)
   private val cascadeBatch =
     new BatchedFunction[
       b.BuildTargetIdentifier,
       Map[BuildTargetIdentifier, b.CompileResult]
-    ](compile)
+    ](compile)(threads.dummyBatchedFunctionEc)
   def pauseables: List[Pauseable] = List(compileBatch, cascadeBatch)
 
   private val isCompiling = TrieMap.empty[b.BuildTargetIdentifier, Boolean]
@@ -49,7 +50,7 @@ final class Compilations(
 
   def compilationFinished(targets: Seq[BuildTargetIdentifier]): Future[Unit] =
     if (currentlyCompiling.isEmpty) {
-      Future(())
+      Future.successful(())
     } else {
       cascadeCompile(targets)
     }
@@ -63,17 +64,18 @@ final class Compilations(
   ): Future[b.CompileResult] = {
     compileBatch(target).map { results =>
       results.getOrElse(target, new b.CompileResult(b.StatusCode.CANCELLED))
-    }
+    }(threads.dummyEc)
   }
 
   def compileTargets(
       targets: Seq[b.BuildTargetIdentifier]
   ): Future[Unit] = {
-    compileBatch(targets).ignoreValue
+    compileBatch(targets).ignoreValue(threads.dummyEc)
   }
 
   def compileFile(path: AbsolutePath): Future[b.CompileResult] = {
     def empty = new b.CompileResult(b.StatusCode.CANCELLED)
+    implicit val ec = threads.dummyEc
     for {
       result <- {
         expand(path) match {
@@ -89,6 +91,7 @@ final class Compilations(
 
   def compileFiles(paths: Seq[AbsolutePath]): Future[Unit] = {
     val targets = expand(paths)
+    implicit val ec = threads.dummyEc
     for {
       result <- compileBatch(targets)
       _ <- compileWorksheets(paths)
@@ -96,16 +99,19 @@ final class Compilations(
   }
 
   def cascadeCompile(targets: Seq[BuildTargetIdentifier]): Future[Unit] = {
+    implicit val ec = threads.dummyEc
     val inverseDependencyLeaves =
       targets.flatMap(buildTargets.inverseDependencyLeaves).distinct
     cascadeBatch(inverseDependencyLeaves).map(_ => ())
   }
 
-  def cascadeCompileFiles(paths: Seq[AbsolutePath]): Future[Unit] =
+  def cascadeCompileFiles(paths: Seq[AbsolutePath]): Future[Unit] = {
+    implicit val ec = threads.dummyEc
     for {
       _ <- cascadeCompile(expand(paths))
       _ <- compileWorksheets(paths)
     } yield ()
+  }
 
   def cancel(): Unit = {
     compileBatch.cancelCurrentRequest()
@@ -131,6 +137,7 @@ final class Compilations(
           connection.clean(params).asScala
       }
 
+      implicit val ec = threads.dummyEc
       for {
         cleanResult <- cleaned
         if cleanResult.getCleaned() == true
@@ -140,6 +147,7 @@ final class Compilations(
 
     val groupedTargetIds = buildTargets.allBuildTargetIds
       .groupBy(buildTargets.buildServerOf(_))
+    implicit val ec = threads.dummyEc
     Future
       .traverse(groupedTargetIds) { case (connectionOpt, targetIds) =>
         clean(connectionOpt, targetIds)
@@ -191,9 +199,11 @@ final class Compilations(
           .successful(Map.empty[BuildTargetIdentifier, b.CompileResult])
           .asCancelable
       case (buildServer, targets) :: Nil =>
+        implicit val ec = threads.dummyEc
         compile(buildServer, targets)
           .map(res => targets.map(target => target -> res).toMap)
       case targetList =>
+        implicit val ec = threads.dummyEc
         val futures = targetList.map { case (buildServer, targets) =>
           compile(buildServer, targets).map(res =>
             targets.map(target => target -> res)
@@ -211,6 +221,7 @@ final class Compilations(
     targets.foreach(target => isCompiling(target) = true)
     val compilation = connection.compile(params)
 
+    implicit val ec = threads.dummyEc
     val result = compilation.asScala
       .andThen { case result =>
         updateCompiledTargetState(result)

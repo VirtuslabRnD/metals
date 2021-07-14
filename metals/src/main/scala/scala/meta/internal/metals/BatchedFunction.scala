@@ -20,7 +20,7 @@ import scala.meta.internal.async.ConcurrentQueue
  */
 final class BatchedFunction[A, B](
     fn: Seq[A] => CancelableFuture[B]
-)(implicit ec: ExecutionContext)
+)(ec: ExecutionContext)
     extends (Seq[A] => Future[B])
     with Pauseable {
 
@@ -95,7 +95,7 @@ final class BatchedFunction[A, B](
         result.future.onComplete { response =>
           unlock()
           requests.foreach(_.result.complete(response))
-        }
+        }(ec)
       } else {
         unlock()
       }
@@ -109,9 +109,11 @@ final class BatchedFunction[A, B](
 }
 
 object BatchedFunction {
-  def fromFuture[A, B](fn: Seq[A] => Future[B])(implicit
+  def fromFuture[A, B](fn: Seq[A] => Future[B])(
       ec: ExecutionContext,
       dummy: DummyImplicit
   ): BatchedFunction[A, B] =
-    new BatchedFunction(fn.andThen(CancelableFuture(_)))
+    new BatchedFunction(
+      { a: Seq[A] => CancelableFuture.apply(fn(a), Cancelable.empty) }
+    )(ec)
 }

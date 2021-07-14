@@ -28,7 +28,7 @@ final case class NewFileProvider(
     client: MetalsLanguageClient,
     packageProvider: PackageProvider,
     focusedDocument: () => Option[AbsolutePath]
-)(implicit
+)(
     ec: ExecutionContext
 ) {
 
@@ -51,11 +51,13 @@ final case class NewFileProvider(
       fileType.flatMap(getFromString) match {
         case Some(ft) => createFile(directory, ft, name)
         case None =>
+          implicit val ec0 = ec
           askForKind
             .flatMapOption(createFile(directory, _, name))
       }
     }
 
+    implicit val ec0 = ec
     newlyCreatedFile.map {
       case Some((path, cursorRange)) =>
         openFile(path, cursorRange)
@@ -70,26 +72,31 @@ final case class NewFileProvider(
   ) = {
     fileType match {
       case kind @ (Class | CaseClass | Object | Trait) =>
+        implicit val ec0 = ec
         getName(kind, name)
           .mapOption(
             createClass(directory, _, kind)
           )
       case Worksheet =>
+        implicit val ec0 = ec
         getName(Worksheet, name)
           .mapOption(
             createEmptyFile(directory, _, ".worksheet.sc")
           )
       case AmmoniteScript =>
+        implicit val ec0 = ec
         getName(AmmoniteScript, name)
           .mapOption(
             createEmptyFile(directory, _, ".sc")
           )
       case PackageObject =>
+        implicit val ec0 = ec
         createPackageObject(directory).liftOption
     }
   }
 
   private def askForKind: Future[Option[NewFileType]] = {
+    implicit val ec0 = ec
     client
       .metalsQuickPick(
         MetalsQuickPickParams(
@@ -113,6 +120,7 @@ final case class NewFileProvider(
   }
 
   private def askForName(kind: String): Future[Option[String]] = {
+    implicit val ec0 = ec
     client
       .metalsInputBox(
         MetalsInputBoxParams(prompt = NewScalaFile.enterNameMessage(kind))
@@ -197,11 +205,12 @@ final case class NewFileProvider(
         new FileAlreadyExistsException(s"The file $path already exists.")
       )
     } else {
-      Future {
+      Future({
         path.writeText(template.fileContent)
         (path, template.cursorPosition.toLSP)
-      }
+      })(ec)
     }
+    implicit val ec0 = ec
     result.failed.foreach {
       case NonFatal(e) => {
         scribe.error("Cannot create file", e)

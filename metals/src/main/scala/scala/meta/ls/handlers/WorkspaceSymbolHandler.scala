@@ -37,6 +37,6 @@ final case class WorkspaceSymbolHandler(
         }
         result
       }
-    }
+    }(ec)
 
 }

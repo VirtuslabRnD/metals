@@ -29,7 +29,7 @@ final case class BspConnector(
     tables: Tables,
     userConfig: () => UserConfiguration,
     statusBar: StatusBar
-)(implicit ec: ExecutionContext) {
+)(ec: ExecutionContext) {
 
   def resolve(): BspResolvedResult = {
     resolveExplicit().getOrElse {
@@ -127,6 +127,7 @@ final case class BspConnector(
       availableBspConnections,
       currentBsp
     )
+    implicit val ec0 = ec
     for {
       item <- client.showMessageRequest(query.params).asScala
     } yield {
@@ -170,6 +171,7 @@ final case class BspConnector(
         Future.successful(false)
       case multipleServers =>
         val currentSelectedServer = tables.buildServers.selectedServer()
+        implicit val ec0 = ec
         askUser(multipleServers, currentSelectedServer).map {
           case ResolvedBloop
               if currentSelectedServer.contains(
@@ -187,7 +189,7 @@ final case class BspConnector(
             if (bloopPresent) {
               true
             } else {
-              createBloopAndConnect().ignoreValue
+              createBloopAndConnect().ignoreValue(ec)
               false
             }
           case ResolvedBspOne(details)

@@ -31,7 +31,7 @@ import org.eclipse.{lsp4j => l}
 class ExtractRenameMember(
     buffers: Buffers,
     trees: Trees
-)(implicit ec: ExecutionContext)
+)(ec: ExecutionContext)
     extends CodeAction {
 
   override def contribute(params: l.CodeActionParams, token: CancelToken)(
@@ -300,7 +300,7 @@ class ExtractRenameMember(
 
   def executeCommand(
       data: ExtractMemberDefinitionData
-  ): Future[CodeActionCommandResult] = Future {
+  ): Future[CodeActionCommandResult] = Future({
     val uri = data.uri
     val params = data.params
 
@@ -357,7 +357,7 @@ class ExtractRenameMember(
         s"Could not execute command ${data.actionType}"
       )
     )
-  }
+  })(ec)
 
   private def newPathFromClass(uri: String, member: Member): AbsolutePath = {
     val src = uri.toAbsolutePath

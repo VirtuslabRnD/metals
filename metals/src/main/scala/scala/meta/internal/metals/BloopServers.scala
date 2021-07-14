@@ -17,6 +17,7 @@ import bloop.bloopgun.BloopgunCli
 import bloop.bloopgun.core.Shell
 import bloop.launcher.LauncherMain
 import org.eclipse.lsp4j.services.LanguageClient
+import scala.meta.ls.MetalsThreads
 
 /**
  * Establishes a connection with a bloop server using Bloop Launcher.
@@ -34,8 +35,9 @@ final case class BloopServers(
     client: MetalsBuildClient,
     languageClient: LanguageClient,
     tables: Tables,
-    config: () => MetalsServerConfig
-)(implicit ec: ExecutionContextExecutorService) {
+    config: () => MetalsServerConfig,
+    threads: MetalsThreads
+)(ec: ExecutionContextExecutorService) {
 
   import BloopServers._
 
@@ -71,7 +73,8 @@ final case class BloopServers(
         () => connectToLauncher(bloopVersion, config().bloopPort),
         tables.dismissedNotifications.ReconnectBsp,
         config(),
-        name
+        name,
+        threads
       )
   }
 
@@ -101,6 +104,7 @@ final case class BloopServers(
     val versionRevertedToDefault = changedToNoVersion && !correctVersionRunning
 
     if (versionRevertedToDefault || versionChanged) {
+      implicit val ec0 = ec
       languageClient
         .showMessageRequest(
           Messages.BloopVersionChange.params()
@@ -109,7 +113,7 @@ final case class BloopServers(
         .flatMap {
           case item if item == Messages.BloopVersionChange.reconnect =>
             shutdownServer()
-            reconnect().ignoreValue
+            reconnect().ignoreValue(ec)
           case _ =>
             Future.successful(())
         }
@@ -161,6 +165,7 @@ final case class BloopServers(
       }
     })
 
+    implicit val ec0 = ec
     serverStarted.future.map { _ =>
       SocketConnection(
         name,

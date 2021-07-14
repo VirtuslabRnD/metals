@@ -336,7 +336,7 @@ final case class ExecuteCommandHandler(
             languageClient.showMessage(Messages.InsertInferredTypeFailed)
             Future.unit
           }.withObjectValue
-        }
+        }(ec)
       case ServerCommands.ExtractMemberDefinition() =>
         CancelTokens.future { token =>
           val args = params.getArguments().asScala
@@ -365,9 +365,9 @@ final case class ExecuteCommandHandler(
               languageClient.showMessage(
                 Messages.ExtractMemberDefinitionFailed
               )
-            )
+            )(ec)
           }.withObjectValue
-        }
+        }(ec)
       case cmd =>
         scribe.error(s"Unknown command '$cmd'")
         Future.successful(()).asJavaObject

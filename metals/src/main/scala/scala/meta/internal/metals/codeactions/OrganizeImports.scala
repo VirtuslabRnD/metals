@@ -20,10 +20,8 @@ import org.eclipse.{lsp4j => l}
 
 sealed abstract class OrganizeImports(
     scalafixProvider: ScalafixProvider,
-    buildTargets: BuildTargets,
-    diagnostics: Diagnostics,
-    languageClient: MetalsLanguageClient
-)(implicit ec: ExecutionContext)
+    buildTargets: BuildTargets
+)(ec: ExecutionContext)
     extends CodeAction {
 
   protected def title: String
@@ -54,6 +52,7 @@ sealed abstract class OrganizeImports(
       path: AbsolutePath,
       scalaVersion: ScalaTarget
   ): Future[Seq[l.CodeAction]] = {
+    implicit val ec0 = ec
     scalafixProvider
       .organizeImports(path, scalaVersion)
       .map { edits =>
@@ -83,10 +82,8 @@ class SourceOrganizeImports(
 )(implicit ec: ExecutionContext)
     extends OrganizeImports(
       scalafixProvider,
-      buildTargets,
-      diagnostics,
-      languageClient
-    ) {
+      buildTargets
+    )(ec) {
 
   override val kind: String = SourceOrganizeImports.kind
   override protected val title: String = SourceOrganizeImports.title
@@ -128,15 +125,12 @@ object SourceOrganizeImports {
 class OrganizeImportsQuickFix(
     scalafixProvider: ScalafixProvider,
     buildTargets: BuildTargets,
-    diagnostics: Diagnostics,
-    languageClient: MetalsLanguageClient
+    diagnostics: Diagnostics
 )(implicit ec: ExecutionContext)
     extends OrganizeImports(
       scalafixProvider,
-      buildTargets,
-      diagnostics,
-      languageClient
-    ) {
+      buildTargets
+    )(ec) {
 
   override val kind: String = OrganizeImportsQuickFix.kind
   override protected val title: String = OrganizeImportsQuickFix.title

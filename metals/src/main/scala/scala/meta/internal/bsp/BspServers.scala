@@ -26,6 +26,7 @@ import scala.meta.io.AbsolutePath
 import ch.epfl.scala.bsp4j.BspConnectionDetails
 import com.google.gson.Gson
 import dev.dirs.ProjectDirectories
+import scala.meta.ls.MetalsThreads
 
 /**
  * Implements BSP server discovery, named "BSP Connection Protocol" in the spec.
@@ -39,8 +40,9 @@ final case class BspServers(
     buildClient: MetalsBuildClient,
     tables: Tables,
     bspGlobalInstallDirectories: List[AbsolutePath],
-    config: () => MetalsServerConfig
-)(implicit ec: ExecutionContextExecutorService) {
+    config: () => MetalsServerConfig,
+    threads: MetalsThreads
+)(ec: ExecutionContextExecutorService) {
 
   def resolve(): BspResolvedResult = {
     findAvailableServers() match {
@@ -79,10 +81,10 @@ final case class BspServers(
       )
 
       val finished = Promise[Unit]()
-      Future {
+      Future({ // !!!
         process.waitFor()
         finished.success(())
-      }
+      })(ec)
 
       Future.successful {
         SocketConnection(
@@ -104,7 +106,8 @@ final case class BspServers(
       newConnection,
       tables.dismissedNotifications.ReconnectBsp,
       config(),
-      details.getName()
+      details.getName(),
+      threads
     )
   }
 

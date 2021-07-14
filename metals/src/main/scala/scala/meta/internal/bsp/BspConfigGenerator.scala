@@ -1,6 +1,5 @@
 package scala.meta.internal.bsp
 
-import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 
 import scala.meta.internal.bsp.BspConfigGenerationStatus._
@@ -14,6 +13,7 @@ import scala.meta.internal.metals.MetalsLanguageClient
 import scala.meta.io.AbsolutePath
 
 import org.eclipse.lsp4j.MessageActionItem
+import scala.meta.ls.MetalsThreads
 
 /**
  * Runs a process to create a .bsp entry for a givev buildtool.
@@ -22,12 +22,13 @@ final case class BspConfigGenerator(
     workspace: () => AbsolutePath,
     languageClient: MetalsLanguageClient,
     buildTools: BuildTools,
-    shellRunner: ShellRunner
-)(implicit ec: ExecutionContext) {
+    shellRunner: ShellRunner,
+    threads: MetalsThreads
+) {
   def runUnconditionally(
       buildTool: BuildTool,
       args: List[String]
-  ): Future[BspConfigGenerationStatus] =
+  ): Future[BspConfigGenerationStatus] = {
     shellRunner
       .run(
         s"${buildTool.executableName} bspConfig",
@@ -35,7 +36,8 @@ final case class BspConfigGenerator(
         workspace(),
         buildTool.redirectErrorOutput
       )
-      .map(BspConfigGenerationStatus.fromExitCode)
+      .map(BspConfigGenerationStatus.fromExitCode)(threads.dummyEc)
+  }
 
   /**
    * Given multiple build tools that are all BuildServerProviders, allow the
@@ -44,6 +46,7 @@ final case class BspConfigGenerator(
   def chooseAndGenerate(
       buildTools: List[BuildTool with BuildServerProvider]
   ): Future[(BuildTool, BspConfigGenerationStatus)] = {
+    implicit val ec0 = threads.dummyEc
     for {
       Some(buildTool) <- chooseBuildServerProvider(buildTools)
       status <- buildTool.generateBspConfig(
@@ -64,6 +67,6 @@ final case class BspConfigGenerator(
         buildTools.find(buildTool =>
           new MessageActionItem(buildTool.executableName) == choice
         )
-      }
+      }(threads.dummyEc)
   }
 }

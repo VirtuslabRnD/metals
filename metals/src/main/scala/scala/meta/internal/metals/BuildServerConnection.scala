@@ -27,6 +27,7 @@ import com.google.gson.Gson
 import org.eclipse.lsp4j.jsonrpc.JsonRpcException
 import org.eclipse.lsp4j.jsonrpc.Launcher
 import org.eclipse.lsp4j.services.LanguageClient
+import scala.meta.ls.MetalsThreads
 
 /**
  * An actively running and initialized BSP connection.
@@ -39,12 +40,13 @@ class BuildServerConnection private (
     languageClient: LanguageClient,
     reconnectNotification: DismissedNotifications#Notification,
     config: MetalsServerConfig,
-    workspace: AbsolutePath
-)(implicit ec: ExecutionContextExecutorService)
+    workspace: AbsolutePath,
+    threads: MetalsThreads
+)(ec: ExecutionContextExecutorService)
     extends Cancelable {
 
   @volatile private var connection = Future.successful(initialConnection)
-  initialConnection.onConnectionFinished(reconnect)
+  initialConnection.onConnectionFinished(reconnect)(threads.dummyEc) // !!!
 
   private val isShuttingDown = new AtomicBoolean(false)
   private val onReconnection =
@@ -103,7 +105,7 @@ class BuildServerConnection private (
             e
           )
       }
-    }
+    }(threads.buildServerConnStuffEc)
 
   def compile(params: CompileParams): CompletableFuture[CompileResult] = {
     register(server => server.buildTargetCompile(params))
@@ -138,7 +140,7 @@ class BuildServerConnection private (
 
   def startDebugSession(params: DebugSessionParams): Future[URI] = {
     register(server => server.startDebugSession(params)).asScala
-      .map(address => URI.create(address.getUri))
+      .map(address => URI.create(address.getUri))(threads.dummyEc)
   }
 
   def workspaceBuildTargets(): Future[WorkspaceBuildTargetsResult] = {
@@ -173,15 +175,21 @@ class BuildServerConnection private (
     if (config.askToReconnect) {
       if (!reconnectNotification.isDismissed) {
         val params = Messages.DisconnectedServer.params()
-        languageClient.showMessageRequest(params).asScala.flatMap {
-          case response if response == Messages.DisconnectedServer.reconnect =>
-            reestablishConnection()
-          case response if response == Messages.DisconnectedServer.notNow =>
-            reconnectNotification.dismiss(5, TimeUnit.MINUTES)
-            connection
-          case _ =>
-            connection
-        }
+        languageClient
+          .showMessageRequest(params)
+          .asScala
+          .flatMap {
+            case response
+                if response == Messages.DisconnectedServer.reconnect =>
+              reestablishConnection()
+            case response if response == Messages.DisconnectedServer.notNow =>
+              Future(reconnectNotification.dismiss(5, TimeUnit.MINUTES))(
+                threads.dbEc
+              )
+                .flatMap(_ => connection)(threads.dummyEc)
+            case _ =>
+              connection
+          }(threads.dummyEc)
       } else {
         connection
       }
@@ -200,10 +208,11 @@ class BuildServerConnection private (
             // version can change when reconnecting
             _version.set(conn.version)
             ongoingRequests.addAll(conn.cancelables)
-            conn.onConnectionFinished(reconnect)
+            conn.onConnectionFinished(reconnect)(threads.dummyEc) // !!!
             conn
-          }
-          connection.foreach(_ => onReconnection.get()(this))
+          }(threads.dummyEc)
+          connection
+            .foreach(_ => onReconnection.get()(this))(threads.dummyEc) // !!!
         }
         connection
       }
@@ -225,18 +234,18 @@ class BuildServerConnection private (
           )
         )
         resultFuture.asScala
-      }
+      }(threads.dummyEc)
       .recoverWith {
         case io: JsonRpcException if io.getCause.isInstanceOf[IOException] =>
-          synchronized {
-            reconnect().flatMap(conn => action(conn.server).asScala)
-          }
+          // remove a synchronized here…
+          reconnect()
+            .flatMap(conn => action(conn.server).asScala)(threads.dummyEc)
         case t
             if implicitly[ClassTag[T]].runtimeClass.getSimpleName != "Object" =>
           val name = implicitly[ClassTag[T]].runtimeClass.getSimpleName
           Future.failed(MetalsBspException(name, t.getMessage))
-      }
-    CancelTokens.future(_ => actionFuture)
+      }(threads.dummyEc)
+    CancelTokens.future(_ => actionFuture)(ec)
   }
 
 }
@@ -258,9 +267,8 @@ object BuildServerConnection {
       reconnectNotification: DismissedNotifications#Notification,
       config: MetalsServerConfig,
       serverName: String,
+      threads: MetalsThreads,
       retry: Int = 5
-  )(implicit
-      ec: ExecutionContextExecutorService
   ): Future[BuildServerConnection] = {
 
     def setupServer(): Future[LauncherConnection] = {
@@ -272,7 +280,7 @@ object BuildServerConnection {
           .setInput(input)
           .setLocalService(localClient)
           .setRemoteInterface(classOf[MetalsBuildServer])
-          .setExecutorService(ec)
+          .setExecutorService(threads.buildServerJsonRpcEs)
           .create()
         val listening = launcher.startListening()
         val server = launcher.getRemoteProxy
@@ -296,7 +304,7 @@ object BuildServerConnection {
           result.getVersion(),
           result.getCapabilities()
         )
-      }
+      }(threads.tempEc)
     }
 
     setupServer()
@@ -307,9 +315,10 @@ object BuildServerConnection {
           languageClient,
           reconnectNotification,
           config,
-          workspace
-        )
-      }
+          workspace,
+          threads
+        )(threads.tempEcs)
+      }(threads.tempEc)
       .recoverWith { case e: TimeoutException =>
         if (retry > 0) {
           scribe.warn(s"Retrying connection to the build server $serverName")
@@ -321,12 +330,13 @@ object BuildServerConnection {
             reconnectNotification,
             config,
             serverName,
+            threads,
             retry - 1
           )
         } else {
           Future.failed(e)
         }
-      }
+      }(threads.tempEc)
   }
 
   final case class BspExtraBuildParams(
@@ -389,8 +399,8 @@ object BuildServerConnection {
 
     def onConnectionFinished(
         f: () => Unit
-    )(implicit ec: ExecutionContext): Unit = {
-      socketConnection.finishedPromise.future.foreach(_ => f())
+    )(ec: ExecutionContext): Unit = {
+      socketConnection.finishedPromise.future.foreach(_ => f())(ec)
     }
   }
 }

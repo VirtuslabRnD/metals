@@ -35,6 +35,6 @@ final case class TextDocumentHoverHandler(
               None
           }.orNull
         )
-    }
+    }(ec)
 
 }

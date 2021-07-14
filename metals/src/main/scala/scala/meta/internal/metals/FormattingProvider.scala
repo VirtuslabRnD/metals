@@ -48,7 +48,7 @@ final class FormattingProvider(
     icons: () => Icons,
     tables: Tables,
     buildTargets: BuildTargets
-)(implicit ec: ExecutionContext)
+)(ec: ExecutionContext)
     extends Cancelable {
 
   import FormattingProvider._
@@ -105,6 +105,7 @@ final class FormattingProvider(
     reset(token)
     val input = path.toInputFromBuffers(buffers)
     if (!scalafmtConf.isFile) {
+      implicit val ec0 = ec
       handleMissingFile(scalafmtConf).map {
         case true =>
           runFormat(path, input).asJava
@@ -120,6 +121,7 @@ final class FormattingProvider(
       }
       reporterPromise.get() match {
         case Some(promise) =>
+          implicit val ec0 = ec
           // Wait until "update .scalafmt.conf" dialogue has completed
           // before returning future.
           promise.future.map {
@@ -155,6 +157,7 @@ final class FormattingProvider(
   }
 
   private def handleMissingVersion(config: AbsolutePath): Future[Boolean] = {
+    implicit val ec0 = ec
     askScalafmtVersion().map {
       case Some(version) =>
         val text = config.toInputFromBuffers(buffers).text
@@ -175,11 +178,13 @@ final class FormattingProvider(
   private def askScalafmtVersion(): Future[Option[String]] = {
     if (!tables.dismissedNotifications.ChangeScalafmtVersion.isDismissed) {
       if (clientConfig.isInputBoxEnabled) {
+        implicit val ec0 = ec
         client
           .metalsInputBox(MissingScalafmtVersion.inputBox())
           .asScala
           .map(response => Option(response.value))
       } else {
+        implicit val ec0 = ec
         client
           .showMessageRequest(MissingScalafmtVersion.messageRequest())
           .asScala
@@ -203,6 +208,7 @@ final class FormattingProvider(
   private def handleMissingFile(path: AbsolutePath): Future[Boolean] = {
     if (!tables.dismissedNotifications.CreateScalafmtFile.isDismissed) {
       val params = MissingScalafmtConf.params(path)
+      implicit val ec0 = ec
       client.showMessageRequest(params).asScala.map { item =>
         if (item == MissingScalafmtConf.createFile) {
           Files.createDirectories(path.toNIO.getParent)
@@ -326,7 +332,8 @@ final class FormattingProvider(
     if (tables.dismissedNotifications.UpdateScalafmtConf.isDismissed)
       Future.unit
     else {
-      Future(inspectDialectRewrite(config)).flatMap {
+      implicit val ec0 = ec
+      Future(inspectDialectRewrite(config))(ec).flatMap {
         case Some(rewrite) =>
           val canUpdate =
             rewrite.canUpdate && scalafmtConf.isInside(workspace())

@@ -36,7 +36,7 @@ class ScalafixProvider(
     buildTargets: BuildTargets,
     buildClient: MetalsBuildClient,
     interactive: InteractiveSemanticdbs
-)(implicit ec: ExecutionContext) {
+)(ec: ExecutionContext) {
   import ScalafixProvider._
   private val scalafixCache = TrieMap.empty[ScalaBinaryVersion, Scalafix]
   private val organizeImportRuleCache =
@@ -75,7 +75,7 @@ class ScalafixProvider(
     val fromDisk = file.toInput
     val inBuffers = file.toInputFromBuffers(buffers)
 
-    compilations.compilationFinished(file).flatMap { _ =>
+    compilations.compilationFinished(file).flatMap({ _ =>
       val scalafixEvaluation =
         scalafixEvaluate(
           file,
@@ -117,6 +117,49 @@ class ScalafixProvider(
             // Retry, since the semanticdb might be stale
             organizeImports(file, scalaTarget, retried = true)
           } else {
+/*
+    if (isUnsaved(inBuffers.text, fromDisk.text)) {
+      scribe.info(s"Organize imports requires saving the file first")
+      languageClient.showMessage(
+        MessageType.Warning,
+        s"Save ${file.toNIO.getFileName} to compile it before organizing imports"
+      )
+      Future.successful(Nil)
+    } else {
+      implicit val ec0 = ec
+      compilations.compilationFinished(file).flatMap { _ =>
+        val scalafixEvaluation = scalafixEvaluate(file, scalaTarget)
+
+        scalafixEvaluation match {
+          case Failure(exception) =>
+            reportScalafixError(
+              "Unable to run scalafix, please check logs for more info.",
+              exception
+            )
+            Future.failed(exception)
+          case Success(results)
+              if !scalafixSucceded(results) && hasStaleSemanticdb(
+                results
+              ) && buildClient.buildHasErrors(file) =>
+            val msg = "Attempt to organize your imports failed. " +
+              "It looks like you have compilation issues causing your semanticdb to be stale. " +
+              "Ensure everything is compiling and try again."
+            scribe.warn(
+              msg
+            )
+            languageClient.showMessage(
+              MessageType.Warning,
+              msg
+            )
+            Future.successful(Nil)
+          case Success(results) if !scalafixSucceded(results) =>
+            val scalafixError = getMessageErrorFromScalafix(results)
+            val exception = ScalafixRunException(scalafixError)
+            reportScalafixError(
+              scalafixError,
+              exception
+            )
+*/
             Future.failed(exception)
           }
         case Success(results) =>
@@ -129,7 +172,7 @@ class ScalafixProvider(
           }
 
       }
-    }
+    })(ec)
   }
 
   private def createTemporarySemanticdb(

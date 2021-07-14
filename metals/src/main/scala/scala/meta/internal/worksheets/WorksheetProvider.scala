@@ -71,7 +71,7 @@ class WorksheetProvider(
     compilers: Compilers,
     compilations: Compilations,
     scalaVersionSelector: ScalaVersionSelector
-)(implicit ec: ExecutionContext)
+)(ec: ExecutionContext)
     extends Cancelable {
 
   // Worksheet evaluation happens on a single threaded job queue. Jobs are
@@ -133,16 +133,18 @@ class WorksheetProvider(
     reset()
   }
 
-  def onDidFocus(path: AbsolutePath): Future[Unit] = Future {
-    if (path.isWorksheet) {
-      val input = path.toInputFromBuffers(buffers)
-      exportableEvaluations.get(input) match {
-        case Some(evaluatedWorksheet) =>
-          publisher().publish(languageClient, path, evaluatedWorksheet)
-        case None =>
-      }
-    }
-  }
+  def onDidFocus(path: AbsolutePath): Future[Unit] =
+    if (path.isWorksheet)
+      Future({
+        val input = path.toInputFromBuffers(buffers)
+        exportableEvaluations.get(input) match {
+          case Some(evaluatedWorksheet) =>
+            publisher().publish(languageClient, path, evaluatedWorksheet)
+          case None =>
+        }
+      })(ec)
+    else
+      Future.successful(())
 
   def evaluateAndPublish(
       path: AbsolutePath,
@@ -151,12 +153,13 @@ class WorksheetProvider(
     val possibleBuildTarget = buildTargets.inverseSources(path)
     val previouslyCompiled = compilations.previouslyCompiled.toSeq
 
+    implicit val ec0 = ec
     (possibleBuildTarget match {
       case Some(bdi)
           if (previouslyCompiled.isEmpty || !previouslyCompiled.contains(
             bdi
           )) =>
-        compilations.compileTarget(bdi).ignoreValue
+        compilations.compileTarget(bdi).ignoreValue(ec)
       case _ =>
         Future.successful(())
     }).flatMap(_ =>
@@ -223,11 +226,14 @@ class WorksheetProvider(
   ): Future[Option[EvaluatedWorksheet]] = {
     val result = new CompletableFuture[Option[EvaluatedWorksheet]]()
     def completeEmptyResult() = result.complete(None)
-    token.onCancel().asScala.foreach { isCancelled =>
-      if (isCancelled) {
-        completeEmptyResult()
-      }
-    }
+    token
+      .onCancel()
+      .asScala
+      .foreach({ isCancelled =>
+        if (isCancelled) {
+          completeEmptyResult()
+        }
+      })(ec)
     val onError: PartialFunction[Throwable, Option[EvaluatedWorksheet]] = {
       case InterruptException() =>
         None
@@ -245,11 +251,11 @@ class WorksheetProvider(
     def runEvaluation(): Unit = {
       cancelables.cancel() // Cancel previous worksheet evaluations.
       val timer = new Timer(Time.system)
-      result.asScala.foreach { _ =>
+      result.asScala.foreach({ _ =>
         scribe.info(
           s"time: evaluated worksheet '${path.filename}' in $timer"
         )
-      }
+      })(ec)
       cancelables.add(Cancelable(() => completeEmptyResult()))
       statusBar.trackFuture(
         s"Evaluating ${path.filename}",
@@ -280,7 +286,7 @@ class WorksheetProvider(
         catch onError
       }
     )
-    result.asScala.recover(onError)
+    result.asScala.recover(onError)(ec)
   }
 
   /**
@@ -317,7 +323,7 @@ class WorksheetProvider(
               secondsElapsed = userConfig().worksheetCancelTimeout
             )
           )
-          cancel.asScala.foreach { c =>
+          cancel.asScala.foreach({ c =>
             if (c.cancel && thread.isAlive()) {
               // User has requested to cancel a running program. first line of
               // defense is `Thread.interrupt()`. Fingers crossed it's enough.
@@ -326,8 +332,8 @@ class WorksheetProvider(
               scribe.warn(s"thread interrupt: ${thread.getName()}")
               thread.interrupt()
             }
-          }
-          result.asScala.onComplete(_ => cancel.cancel(true))
+          })(ec)
+          result.asScala.onComplete(_ => cancel.cancel(true))(ec)
         }
       }
     }
