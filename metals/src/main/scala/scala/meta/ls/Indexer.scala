@@ -18,7 +18,6 @@ import scala.meta.internal.metals.StatusBar
 import scala.meta.internal.metals.TimerProvider
 import scala.meta.internal.metals.ScalafixProvider
 import scala.concurrent.Promise
-import scala.meta.internal.metals.ammonite.Ammonite
 import scala.meta.internal.metals.ClientConfiguration
 import scala.meta.internal.metals.ImportedBuild
 import scala.meta.internal.mtags.OnDemandSymbolIndex
@@ -63,8 +62,7 @@ final case class Indexer(
     timerProvider: TimerProvider,
     scalafixProvider: ScalafixProvider,
     indexingPromise: Promise[Unit],
-    ammonite: Ammonite,
-    lastImportedBuilds: () => List[ImportedBuild],
+    buildData: () => Seq[(String, BuildTargets.WritableData, ImportedBuild)],
     clientConfig: ClientConfiguration,
     definitionIndex: OnDemandSymbolIndex,
     referencesProvider: ReferenceProvider,
@@ -197,8 +195,6 @@ final case class Indexer(
   }
 
   private def indexWorkspace(check: () => Unit): Unit = {
-    val ammBuild = ammonite.lastImportedBuild
-    val lastImportedBuilds0 = lastImportedBuilds()
     timerProvider.timedThunk(
       "reset stuff",
       clientConfig.initialConfig.statistics.isIndex
@@ -210,15 +206,7 @@ final case class Indexer(
       worksheetProvider.reset()
       symbolSearch.reset()
     }
-    val allBuildTargetsData = Seq(
-      (
-        "main",
-        buildTargetsData,
-        if (lastImportedBuilds0.isEmpty) ImportedBuild.empty
-        else lastImportedBuilds0.reduce(_ ++ _)
-      ),
-      ("ammonite", ammonite.buildTargetsData, ammBuild)
-    )
+    val allBuildTargetsData = buildData()
     for ((name, data, importedBuild) <- allBuildTargetsData)
       timerProvider.timedThunk(
         s"updated $name build targets",
@@ -495,16 +483,12 @@ final case class Indexer(
   def reindexWorkspaceSources(
       paths: Seq[AbsolutePath]
   ): Unit = {
+    val data = buildData().map(_._2)
     for {
       path <- paths.iterator
       if path.isScalaOrJava
     } {
-      indexSourceFile(
-        path,
-        buildTargets.inverseSourceItem(path),
-        None,
-        Seq(buildTargetsData, ammonite.buildTargetsData)
-      )
+      indexSourceFile(path, buildTargets.inverseSourceItem(path), None, data)
     }
   }
 }
