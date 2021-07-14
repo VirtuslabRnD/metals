@@ -746,66 +746,70 @@ class MetalsLanguageServer(
       .timed("initialize")(Future {
         initializeParams = Option(params)
         updateWorkspaceDirectory(params)
-        val capabilities = new ServerCapabilities()
-        capabilities.setExecuteCommandProvider(
-          new ExecuteCommandOptions(
-            ServerCommands.all.map(_.id).asJava
-          )
-        )
-        capabilities.setFoldingRangeProvider(true)
-        capabilities.setSelectionRangeProvider(true)
-        capabilities.setCodeLensProvider(new CodeLensOptions(false))
-        capabilities.setDefinitionProvider(true)
-        capabilities.setImplementationProvider(true)
-        capabilities.setHoverProvider(true)
-        capabilities.setReferencesProvider(true)
-        val renameOptions = new RenameOptions()
-        renameOptions.setPrepareProvider(true)
-        capabilities.setRenameProvider(renameOptions)
-        capabilities.setDocumentHighlightProvider(true)
-        capabilities.setDocumentOnTypeFormattingProvider(
-          new DocumentOnTypeFormattingOptions("\n", List("\"").asJava)
-        )
-        capabilities.setDocumentRangeFormattingProvider(
-          initialConfig.allowMultilineStringFormatting
-        )
-        capabilities.setSignatureHelpProvider(
-          new SignatureHelpOptions(List("(", "[", ",").asJava)
-        )
-        capabilities.setCompletionProvider(
-          new CompletionOptions(
-            clientConfig.isCompletionItemResolve,
-            List(".", "*").asJava
-          )
-        )
-        capabilities.setWorkspaceSymbolProvider(true)
-        capabilities.setDocumentSymbolProvider(true)
-        capabilities.setDocumentFormattingProvider(true)
-        if (initializeParams.supportsCodeActionLiterals) {
-          capabilities.setCodeActionProvider(
-            new CodeActionOptions(
-              List(
-                CodeActionKind.QuickFix,
-                CodeActionKind.Refactor,
-                CodeActionKind.SourceOrganizeImports
-              ).asJava
-            )
-          )
-        } else {
-          capabilities.setCodeActionProvider(true)
-        }
-
-        val textDocumentSyncOptions = new TextDocumentSyncOptions
-        textDocumentSyncOptions.setChange(TextDocumentSyncKind.Full)
-        textDocumentSyncOptions.setSave(new SaveOptions(true))
-        textDocumentSyncOptions.setOpenClose(true)
-
-        capabilities.setTextDocumentSync(textDocumentSyncOptions)
-
         val serverInfo = new ServerInfo("Metals", BuildInfo.metalsVersion)
-        new InitializeResult(capabilities, serverInfo)
+        new InitializeResult(serverCapabilities(), serverInfo)
       })
       .asJava
+  }
+
+  private def serverCapabilities(): ServerCapabilities = {
+
+    val capabilities = new ServerCapabilities()
+    capabilities.setExecuteCommandProvider(
+      new ExecuteCommandOptions(
+        ServerCommands.all.map(_.id).asJava
+      )
+    )
+    capabilities.setFoldingRangeProvider(true)
+    capabilities.setSelectionRangeProvider(true)
+    capabilities.setCodeLensProvider(new CodeLensOptions(false))
+    capabilities.setDefinitionProvider(true)
+    capabilities.setImplementationProvider(true)
+    capabilities.setHoverProvider(true)
+    capabilities.setReferencesProvider(true)
+    val renameOptions = new RenameOptions()
+    renameOptions.setPrepareProvider(true)
+    capabilities.setRenameProvider(renameOptions)
+    capabilities.setDocumentHighlightProvider(true)
+    capabilities.setDocumentOnTypeFormattingProvider(
+      new DocumentOnTypeFormattingOptions("\n", List("\"").asJava)
+    )
+    capabilities.setDocumentRangeFormattingProvider(
+      initialConfig.allowMultilineStringFormatting
+    )
+    capabilities.setSignatureHelpProvider(
+      new SignatureHelpOptions(List("(", "[", ",").asJava)
+    )
+    capabilities.setCompletionProvider(
+      new CompletionOptions(
+        clientConfig.isCompletionItemResolve,
+        List(".", "*").asJava
+      )
+    )
+    capabilities.setWorkspaceSymbolProvider(true)
+    capabilities.setDocumentSymbolProvider(true)
+    capabilities.setDocumentFormattingProvider(true)
+    if (initializeParams.supportsCodeActionLiterals) {
+      capabilities.setCodeActionProvider(
+        new CodeActionOptions(
+          List(
+            CodeActionKind.QuickFix,
+            CodeActionKind.Refactor,
+            CodeActionKind.SourceOrganizeImports
+          ).asJava
+        )
+      )
+    } else {
+      capabilities.setCodeActionProvider(true)
+    }
+
+    val textDocumentSyncOptions = new TextDocumentSyncOptions
+    textDocumentSyncOptions.setChange(TextDocumentSyncKind.Full)
+    textDocumentSyncOptions.setSave(new SaveOptions(true))
+    textDocumentSyncOptions.setOpenClose(true)
+
+    capabilities.setTextDocumentSync(textDocumentSyncOptions)
+    capabilities
   }
 
   private def registerNiceToHaveFilePatterns(): Unit = {
