@@ -83,6 +83,7 @@ import org.eclipse.lsp4j.jsonrpc.messages.{Either => JEither}
 import org.eclipse.lsp4j.jsonrpc.services.JsonNotification
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest
 import org.eclipse.{lsp4j => l}
+import scala.meta.ls.handlers.DidOpenHandler
 
 class MetalsLanguageServer(
     ec: ExecutionContextExecutorService,
@@ -946,56 +947,29 @@ class MetalsLanguageServer(
     }
   }
 
+  private val didOpenHandler = DidOpenHandler(
+    () => focusedDocument,
+    p => { focusedDocument = p },
+    openedFiles,
+    recentlyFocusedFiles,
+    fingerprints,
+    packageProvider,
+    buffers,
+    languageClient,
+    interactiveSemanticdbs,
+    ammonite,
+    compilers,
+    compilations,
+    parseTrees,
+    charset,
+    executionContext,
+    syntheticsDecorator,
+    () => workspace
+  )
+
   @JsonNotification("textDocument/didOpen")
-  def didOpen(params: DidOpenTextDocumentParams): CompletableFuture[Unit] = {
-    val path = params.getTextDocument.getUri.toAbsolutePath
-    // In some cases like peeking definition didOpen might be followed up by close
-    // and we would lose the notion of the focused document
-    focusedDocument.foreach(recentlyFocusedFiles.add)
-    focusedDocument = Some(path)
-    openedFiles.add(path)
-
-    // Update md5 fingerprint from file contents on disk
-    fingerprints.add(path, FileIO.slurp(path, charset))
-    // Update in-memory buffer contents from LSP client
-    buffers.put(path, params.getTextDocument.getText)
-
-    packageProvider
-      .workspaceEdit(path)
-      .map(new ApplyWorkspaceEditParams(_))
-      .foreach(languageClient.applyEdit)
-
-    // trigger compilation in preparation for definition requests for dependency sources and standalone files
-    val loadInteractive = Future {
-      interactiveSemanticdbs.textDocument(path)
-    }
-    if (path.isDependencySource(workspace)) {
-      CancelTokens { _ =>
-        // publish diagnostics
-        interactiveSemanticdbs.didFocus(path)
-        ()
-      }
-    } else {
-      if (path.isAmmoniteScript)
-        ammonite.maybeImport(path)
-      val loadFuture = compilers.load(List(path))
-      val compileFuture =
-        compilations.compileFile(path)
-      Future
-        .sequence(
-          List(
-            loadInteractive,
-            parseTrees(path).flatMap(_ =>
-              syntheticsDecorator.publishSynthetics(path)
-            ),
-            loadFuture,
-            compileFuture
-          )
-        )
-        .ignoreValue
-        .asJava
-    }
-  }
+  def didOpen(params: DidOpenTextDocumentParams): CompletableFuture[Unit] =
+    didOpenHandler(params)
 
   @JsonNotification("metals/didFocusTextDocument")
   def didFocus(
