@@ -586,7 +586,6 @@ class MetalsLanguageServer(
         )
         workspaceSymbols = new WorkspaceSymbolProvider(
           () => workspace,
-          clientConfig.initialConfig.statistics,
           buildTargets,
           definitionIndex,
           excludedPackageHandler.isExcludedPackage
