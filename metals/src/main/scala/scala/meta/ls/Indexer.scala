@@ -217,7 +217,8 @@ final case class Indexer(
         buildTargetsData,
         if (lastImportedBuilds0.isEmpty) ImportedBuild.empty
         else lastImportedBuilds0.reduce(_ ++ _)
-      )
+      ),
+      ("ammonite", ammonite.buildTargetsData, ammBuild)
     )
     for ((name, data, importedBuild) <- allBuildTargetsData)
       timerProvider.timedThunk(
