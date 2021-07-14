@@ -281,7 +281,9 @@ class MetalsLanguageServer(
       InitializationOptions.Default
     )
 
-  def parseTreesAndPublishDiags(paths: Seq[AbsolutePath]): Future[Seq[Unit]] = {
+  private def parseTreesAndPublishDiags(
+      paths: Seq[AbsolutePath]
+  ): Future[Seq[Unit]] = {
     Future.traverse(paths.distinct) { path =>
       if (path.isScalaFilename) {
         Future(diagnostics.onSyntaxError(path, trees.didChange(path)))
@@ -310,7 +312,7 @@ class MetalsLanguageServer(
     cancelables.add(() => languageClient.shutdown())
   }
 
-  def register[T <: Cancelable](cancelable: T): T = {
+  private def register[T <: Cancelable](cancelable: T): T = {
     cancelables.add(cancelable)
     cancelable
   }
