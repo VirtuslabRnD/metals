@@ -447,8 +447,7 @@ class ExtractRenameMemberLspSuite
   ): Unit =
     test(name) {
       val buffers = Buffers()
-      val buildTargets =
-        new BuildTargets(() => PathIO.workingDirectory, None, _ => None)
+      val buildTargets = new BuildTargets(() => PathIO.workingDirectory, None)
       val selector = ScalaVersionSelector(
         () => UserConfiguration(fallbackScalaVersion = Some(scalaVersion)),
         buildTargets

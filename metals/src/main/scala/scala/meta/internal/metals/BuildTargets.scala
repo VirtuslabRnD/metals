@@ -13,7 +13,6 @@ import scala.collection.mutable.ListBuffer
 import scala.util.control.NonFatal
 
 import scala.meta.internal.metals.MetalsEnrichments._
-import scala.meta.internal.metals.ammonite.Ammonite
 import scala.meta.internal.mtags.Symbol
 import scala.meta.io.AbsolutePath
 
@@ -29,8 +28,7 @@ import ch.epfl.scala.bsp4j.WorkspaceBuildTargetsResult
  */
 final class BuildTargets(
     workspace: () => AbsolutePath,
-    tables: Option[Tables],
-    ammoniteBuildServer: BuildTargetIdentifier => Option[BuildServerConnection]
+    tables: Option[Tables]
 ) {
   private var data: BuildTargets.DataSeq =
     BuildTargets.DataSeq(BuildTargets.Data.create(), Nil)
@@ -396,39 +394,17 @@ final class BuildTargets(
 
   def buildServerOf(
       id: BuildTargetIdentifier
-  ): Option[BuildServerConnection] = {
-    ammoniteBuildServer(id).orElse(
-      data.iterator
-        .flatMap(_.targetToConnection.get(id).iterator)
-        .toStream
-        .headOption
-    )
-  }
+  ): Option[BuildServerConnection] =
+    data.iterator
+      .flatMap(_.targetToConnection.get(id).iterator)
+      .toStream
+      .headOption
 
   def addData(data: BuildTargets.WritableData): Unit =
     this.data = BuildTargets.DataSeq(data, this.data.head :: this.data.tail)
 }
 
 object BuildTargets {
-
-  def withAmmonite(
-      workspace: () => AbsolutePath,
-      tables: Option[Tables],
-      ammonite: () => Ammonite
-  ): BuildTargets = {
-    val ammoniteBuildServerF =
-      (id: BuildTargetIdentifier) =>
-        if (Ammonite.isAmmBuildTarget(id)) ammonite().buildServer
-        else None
-
-    new BuildTargets(workspace, tables, ammoniteBuildServerF)
-  }
-
-  def withoutAmmonite(
-      workspace: () => AbsolutePath,
-      tables: Option[Tables]
-  ): BuildTargets =
-    new BuildTargets(workspace, tables, _ => None)
 
   def isInverseDependency(
       query: BuildTargetIdentifier,

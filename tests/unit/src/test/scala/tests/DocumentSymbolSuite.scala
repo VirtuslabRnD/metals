@@ -33,7 +33,7 @@ abstract class DocumentSymbolSuite(
           val buffers = Buffers()
           buffers.put(file.file, file.code)
           val buildTargets =
-            new BuildTargets(() => PathIO.workingDirectory, None, _ => None)
+            new BuildTargets(() => PathIO.workingDirectory, None)
           val selector =
             ScalaVersionSelector(
               () =>
