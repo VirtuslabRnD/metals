@@ -34,7 +34,7 @@ import scala.meta.internal.metals.MetalsSymbolSearch
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.builds.BuildTools
 import scala.meta.internal.metals.FormattingProvider
-import scala.meta.internal.metals.FileWatcher
+import scala.meta.internal.metals.watcher.FileWatcher
 import scala.meta.io.AbsolutePath
 import java.util.concurrent.atomic.AtomicReference
 import ch.epfl.scala.{bsp4j => b}
