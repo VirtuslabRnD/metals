@@ -43,7 +43,6 @@ import scala.meta.internal.implementation.ImplementationProvider
 import scala.meta.internal.implementation.Supermethods
 import scala.meta.internal.io.FileIO
 import scala.meta.internal.metals.Messages.AmmoniteJvmParametersChange
-import scala.meta.internal.metals.Messages.IncompatibleBloopVersion
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.metals.ammonite.Ammonite
 import scala.meta.internal.metals.codeactions.ExtractMemberDefinitionData
@@ -62,7 +61,6 @@ import scala.meta.internal.parsing.TokenEditDistance
 import scala.meta.internal.parsing.Trees
 import scala.meta.internal.remotels.RemoteLanguageServer
 import scala.meta.internal.rename.RenameProvider
-import scala.meta.internal.semver.SemVer
 import scala.meta.internal.tvp._
 import scala.meta.internal.watcher.DirectoryChangeEvent
 import scala.meta.internal.watcher.DirectoryChangeEvent.EventType
@@ -666,9 +664,9 @@ class MetalsLanguageServer(
           tables,
           languageClient,
           doctor,
-          () => slowConnectToBuildServer(forceImport = true),
+          () => buildServerManager.slowConnectToBuildServer(forceImport = true),
           bspConnector,
-          () => quickConnectToBuildServer()
+          () => buildServerManager.quickConnectToBuildServer()
         )
 
         val worksheetPublisher =
@@ -885,8 +883,10 @@ class MetalsLanguageServer(
       val result = Future
         .sequence(
           List[Future[Unit]](
-            quickConnectToBuildServer().ignoreValue,
-            slowConnectToBuildServer(forceImport = false).ignoreValue,
+            buildServerManager.quickConnectToBuildServer().ignoreValue,
+            buildServerManager
+              .slowConnectToBuildServer(forceImport = false)
+              .ignoreValue,
             Future(workspaceSymbols.indexClasspath()),
             Future(startHttpServer()),
             Future(formattingProvider.load())
@@ -1199,7 +1199,7 @@ class MetalsLanguageServer(
                   session.version,
                   userConfig.bloopVersion.nonEmpty,
                   old.bloopVersion.isDefined,
-                  () => autoConnectToBuildServer
+                  () => buildServerManager.autoConnectToBuildServer
                 )
               } else if (
                 userConfig.ammoniteJvmProperties != old.ammoniteJvmProperties && buildTargets.allBuildTargetIds
@@ -1585,15 +1585,17 @@ class MetalsLanguageServer(
         bspSession.foreach { session =>
           if (session.main.isBloop) bloopServers.shutdownServer()
         }
-        autoConnectToBuildServer().asJavaObject
+        buildServerManager.autoConnectToBuildServer().asJavaObject
       case ServerCommands.GenerateBspConfig() =>
         generateBspConfig().asJavaObject
       case ServerCommands.ImportBuild() =>
-        slowConnectToBuildServer(forceImport = true).asJavaObject
+        buildServerManager
+          .slowConnectToBuildServer(forceImport = true)
+          .asJavaObject
       case ServerCommands.ConnectBuildServer() =>
-        quickConnectToBuildServer().asJavaObject
+        buildServerManager.quickConnectToBuildServer().asJavaObject
       case ServerCommands.DisconnectBuildServer() =>
-        disconnectOldBuildServer().asJavaObject
+        buildServerManager.disconnectOldBuildServer().asJavaObject
       case ServerCommands.RunDoctor() =>
         Future {
           doctor.executeRunDoctor()
@@ -1602,10 +1604,11 @@ class MetalsLanguageServer(
         (for {
           isSwitched <- bspConnector.switchBuildServer(
             workspace,
-            () => slowConnectToBuildServer(forceImport = true)
+            () =>
+              buildServerManager.slowConnectToBuildServer(forceImport = true)
           )
           _ <- {
-            if (isSwitched) quickConnectToBuildServer()
+            if (isSwitched) buildServerManager.quickConnectToBuildServer()
             else Future.successful(())
           }
         } yield ()).asJavaObject
@@ -1892,7 +1895,7 @@ class MetalsLanguageServer(
       status match {
         case Generated =>
           tables.buildServers.chooseServer(buildTool.executableName)
-          quickConnectToBuildServer().ignoreValue
+          buildServerManager.quickConnectToBuildServer().ignoreValue
         case Cancelled => ()
         case Failed(exit) =>
           exit match {
@@ -1942,210 +1945,6 @@ class MetalsLanguageServer(
     })
   }
 
-  private def supportedBuildTool(): Future[Option[BuildTool]] = {
-    def isCompatibleVersion(buildTool: BuildTool) = {
-      val isCompatibleVersion = SemVer.isCompatibleVersion(
-        buildTool.minimumVersion,
-        buildTool.version
-      )
-      if (isCompatibleVersion) {
-        Some(buildTool)
-      } else {
-        scribe.warn(s"Unsupported $buildTool version ${buildTool.version}")
-        languageClient.showMessage(
-          Messages.IncompatibleBuildToolVersion.params(buildTool)
-        )
-        None
-      }
-    }
-
-    buildTools.loadSupported match {
-      case Nil => {
-        if (!buildTools.isAutoConnectable) {
-          warnings.noBuildTool()
-        }
-        Future(None)
-      }
-      case buildTool :: Nil => Future(isCompatibleVersion(buildTool))
-      case buildTools =>
-        for {
-          Some(buildTool) <- buildToolSelector.checkForChosenBuildTool(
-            buildTools
-          )
-        } yield isCompatibleVersion(buildTool)
-    }
-  }
-
-  private def slowConnectToBuildServer(
-      forceImport: Boolean
-  ): Future[BuildChange] = {
-    for {
-      possibleBuildTool <- supportedBuildTool
-      chosenBuildServer = tables.buildServers.selectedServer()
-      isBloopOrEmpty = chosenBuildServer.isEmpty || chosenBuildServer.exists(
-        _ == BspConnector.BLOOP_SELECTED
-      )
-      buildChange <- possibleBuildTool match {
-        case Some(buildTool) =>
-          buildTool.digest(workspace) match {
-            case None =>
-              scribe.warn(s"Skipping build import, no checksum.")
-              Future.successful(BuildChange.None)
-            case Some(digest) if isBloopOrEmpty =>
-              slowConnectToBloopServer(forceImport, buildTool, digest)
-            case Some(digest) =>
-              indexer.reloadWorkspaceAndIndex(forceImport, buildTool, digest)
-          }
-        case None =>
-          Future.successful(BuildChange.None)
-      }
-    } yield buildChange
-  }
-
-  private def slowConnectToBloopServer(
-      forceImport: Boolean,
-      buildTool: BuildTool,
-      checksum: String
-  ): Future[BuildChange] =
-    for {
-      result <- {
-        if (forceImport) bloopInstall.runUnconditionally(buildTool)
-        else bloopInstall.runIfApproved(buildTool, checksum)
-      }
-      change <- {
-        if (result.isInstalled) quickConnectToBuildServer()
-        else if (result.isFailed) {
-          if (buildTools.isAutoConnectable) {
-            // TODO(olafur) try to connect but gracefully error
-            languageClient.showMessage(
-              Messages.ImportProjectPartiallyFailed
-            )
-            // Connect nevertheless, many build import failures are caused
-            // by resolution errors in one weird module while other modules
-            // exported successfully.
-            quickConnectToBuildServer()
-          } else {
-            languageClient.showMessage(Messages.ImportProjectFailed)
-            Future.successful(BuildChange.Failed)
-          }
-        } else {
-          Future.successful(BuildChange.None)
-        }
-      }
-    } yield change
-
-  private def quickConnectToBuildServer(): Future[BuildChange] = {
-    val connected = if (!buildTools.isAutoConnectable) {
-      scribe.warn("Build server is not auto-connectable.")
-      Future.successful(BuildChange.None)
-    } else {
-      autoConnectToBuildServer()
-    }
-
-    connected.map { change =>
-      buildServerPromise.trySuccess(())
-      change
-    }
-  }
-
-  private def autoConnectToBuildServer(): Future[BuildChange] = {
-    def compileAllOpenFiles: BuildChange => Future[BuildChange] = {
-      case change if !change.isFailed =>
-        Future
-          .sequence[Unit, List](
-            compilations
-              .cascadeCompileFiles(buffers.open.toSeq)
-              .ignoreValue ::
-              compilers.load(buffers.open.toSeq) ::
-              Nil
-          )
-          .map(_ => change)
-      case other => Future.successful(other)
-    }
-
-    (for {
-      _ <- disconnectOldBuildServer()
-      maybeSession <- timerProvider.timed("Connected to build server", true) {
-        bspConnector.connect(workspace, userConfig)
-      }
-      result <- maybeSession match {
-        case Some(session) =>
-          val result = connectToNewBuildServer(session)
-          session.mainConnection.onReconnection { newMainConn =>
-            val updSession = session.copy(main = newMainConn)
-            connectToNewBuildServer(updSession)
-              .flatMap(compileAllOpenFiles)
-              .ignoreValue
-          }
-          result
-        case None =>
-          Future.successful(BuildChange.None)
-      }
-      _ = {
-        treeView.init()
-      }
-    } yield result)
-      .recover { case NonFatal(e) =>
-        disconnectOldBuildServer()
-        val message =
-          "Failed to connect with build server, no functionality will work."
-        val details = " See logs for more details."
-        languageClient.showMessage(
-          new MessageParams(MessageType.Error, message + details)
-        )
-        scribe.error(message, e)
-        BuildChange.Failed
-      }
-      .flatMap(compileAllOpenFiles)
-  }
-
-  private def disconnectOldBuildServer(): Future[Unit] = {
-    bspSession.foreach(connection =>
-      scribe.info(s"Disconnecting from ${connection.main.name} session...")
-    )
-
-    bspSession match {
-      case None => Future.successful(())
-      case Some(session) =>
-        bspSession = None
-        diagnostics.reset()
-        buildTargets.resetConnections(List.empty)
-        session.shutdown()
-    }
-  }
-
-  private def connectToNewBuildServer(
-      session: BspSession
-  ): Future[BuildChange] = {
-    scribe.info(
-      s"Connected to Build server: ${session.main.name} v${session.version}"
-    )
-    cancelables.add(session)
-    compilers.cancel()
-    bspSession = Some(session)
-    val importedBuilds0 = timerProvider.timed("Imported build") {
-      session.importBuilds()
-    }
-    for {
-      bspBuilds <- statusBar.trackFuture("Importing build", importedBuilds0)
-      _ = {
-        val idToConnection = bspBuilds.flatMap { bspBuild =>
-          val targets =
-            bspBuild.build.workspaceBuildTargets.getTargets().asScala
-          targets.map(t => (t.getId(), bspBuild.connection))
-        }
-        buildTargets.resetConnections(idToConnection)
-        lastImportedBuilds = bspBuilds.map(_.build)
-      }
-      _ <- indexer.profiledIndexWorkspace(() => doctor.check())
-      _ = if (session.main.isBloop) checkRunningBloopVersion(session.version)
-    } yield {
-      BuildChange.Reconnected
-    }
-  }
-
-  private var lastImportedBuilds = List.empty[ImportedBuild]
-
   private val indexer = scala.meta.ls.Indexer(
     workspaceReload,
     doctor,
@@ -2158,7 +1957,7 @@ class MetalsLanguageServer(
     scalafixProvider,
     indexingPromise,
     ammonite,
-    () => lastImportedBuilds,
+    () => buildServerManager.lastImportedBuilds,
     clientConfig,
     definitionIndex,
     referencesProvider,
@@ -2182,26 +1981,33 @@ class MetalsLanguageServer(
     scalaVersionSelector
   )
 
-  private def checkRunningBloopVersion(bspServerVersion: String) = {
-    if (doctor.isUnsupportedBloopVersion()) {
-      val notification = tables.dismissedNotifications.IncompatibleBloop
-      if (!notification.isDismissed) {
-        val messageParams = IncompatibleBloopVersion.params(
-          bspServerVersion,
-          BuildInfo.bloopVersion,
-          isChangedInSettings = userConfig.bloopVersion != None
-        )
-        languageClient.showMessageRequest(messageParams).asScala.foreach {
-          case action if action == IncompatibleBloopVersion.shutdown =>
-            bloopServers.shutdownServer()
-            autoConnectToBuildServer()
-          case action if action == IncompatibleBloopVersion.dismissForever =>
-            notification.dismissForever()
-          case _ =>
-        }
-      }
-    }
-  }
+  private val buildServerManager: scala.meta.ls.BuildServerManager =
+    new scala.meta.ls.BuildServerManager(
+      tables,
+      languageClient,
+      buildTools,
+      warnings,
+      buildToolSelector,
+      executionContext,
+      () => workspace,
+      indexer,
+      bloopInstall,
+      buildServerPromise,
+      compilations,
+      buffers,
+      compilers,
+      timerProvider,
+      bspConnector,
+      () => userConfig,
+      () => treeView,
+      () => bspSession,
+      sess => { bspSession = sess },
+      statusBar,
+      doctor,
+      buildTargets,
+      diagnostics,
+      bloopServers
+    )
 
   private def onWorksheetChanged(
       paths: Seq[AbsolutePath]
@@ -2225,7 +2031,7 @@ class MetalsLanguageServer(
   ): Future[BuildChange] = {
     val isBuildChange = paths.exists(buildTools.isBuildRelated(workspace, _))
     if (isBuildChange) {
-      slowConnectToBuildServer(forceImport = false)
+      buildServerManager.slowConnectToBuildServer(forceImport = false)
     } else {
       Future.successful(BuildChange.None)
     }
