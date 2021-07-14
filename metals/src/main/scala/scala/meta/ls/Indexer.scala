@@ -70,6 +70,7 @@ final case class Indexer(
     referencesProvider: ReferenceProvider,
     workspaceSymbols: WorkspaceSymbolProvider,
     buildTargets: BuildTargets,
+    buildTargetsData: BuildTargets.WritableData,
     interactiveSemanticdbs: InteractiveSemanticdbs,
     buildClient: ForwardingMetalsBuildClient,
     semanticDBIndexer: SemanticdbIndexer,
@@ -195,27 +196,49 @@ final case class Indexer(
   }
 
   private def indexWorkspace(check: () => Unit): Unit = {
-    val i = (ammonite.lastImportedBuild :: lastImportedBuilds()).reduce(_ ++ _)
+    val ammBuild = ammonite.lastImportedBuild
+    val lastImportedBuilds0 = lastImportedBuilds()
+    val i = (ammBuild :: lastImportedBuilds0).reduce(_ ++ _)
     timerProvider.timedThunk(
-      "updated build targets",
+      "reset stuff",
       clientConfig.initialConfig.statistics.isIndex
     ) {
-      buildTargets.reset()
       interactiveSemanticdbs.reset()
       buildClient.reset()
       semanticDBIndexer.reset()
       treeView().reset()
       worksheetProvider.reset()
       symbolSearch.reset()
-      buildTargets.addWorkspaceBuildTargets(i.workspaceBuildTargets)
-      buildTargets.addScalacOptions(i.scalacOptions)
-      for {
-        item <- i.sources.getItems.asScala
-        source <- item.getSources.asScala
-      } {
-        val sourceItemPath = source.getUri.toAbsolutePath(followSymlink = false)
-        buildTargets.addSourceItem(sourceItemPath, item.getTarget)
+    }
+    val allBuildTargetsData = Seq(
+      (
+        "main",
+        buildTargetsData,
+        if (lastImportedBuilds0.isEmpty) ImportedBuild.empty
+        else lastImportedBuilds0.reduce(_ ++ _)
+      )
+    )
+    for ((name, data, importedBuild) <- allBuildTargetsData)
+      timerProvider.timedThunk(
+        s"updated $name build targets",
+        clientConfig.initialConfig.statistics.isIndex
+      ) {
+        data.reset()
+        data.addWorkspaceBuildTargets(importedBuild.workspaceBuildTargets)
+        data.addScalacOptions(importedBuild.scalacOptions)
+        for {
+          item <- importedBuild.sources.getItems.asScala
+          source <- item.getSources.asScala
+        } {
+          val sourceItemPath =
+            source.getUri.toAbsolutePath(followSymlink = false)
+          data.addSourceItem(sourceItemPath, item.getTarget)
+        }
       }
+    timerProvider.timedThunk(
+      "post update build targets stuff",
+      clientConfig.initialConfig.statistics.isIndex
+    ) {
       check()
       buildTools
         .loadSupported()
@@ -250,13 +273,14 @@ final case class Indexer(
       "indexed workspace sources",
       clientConfig.initialConfig.statistics.isIndex
     ) {
-      indexWorkspaceSources()
+      indexWorkspaceSources(buildTargetsData)
     }
     timerProvider.timedThunk(
       "indexed library sources",
       clientConfig.initialConfig.statistics.isIndex
     ) {
-      indexDependencySources(i.dependencySources)
+      indexJdkSources(buildTargetsData, i.dependencySources)
+      indexDependencySources(buildTargetsData, i.dependencySources)
     }
 
     focusedDocument().foreach { doc =>
@@ -265,52 +289,47 @@ final case class Indexer(
         .foreach(focusedDocumentBuildTarget.set)
     }
 
-    val targets = buildTargets.all.map(_.id).toSeq
+    val targets = buildTargetsData.all.map(_.id).toSeq
     buildTargetClasses
       .rebuildIndex(targets)
       .foreach(_ => languageClient.refreshModel())
   }
 
-  def indexWorkspaceSources(): Unit = {
+  def indexWorkspaceSources(): Unit =
+    indexWorkspaceSources(buildTargetsData)
+  def indexWorkspaceSources(data: BuildTargets.WritableData): Unit = {
     for {
-      (sourceItem, targets) <- buildTargets.sourceItemsToBuildTargets
+      (sourceItem, targets) <- data.sourceItemsToBuildTarget
       source <- sourceItem.listRecursive
       if source.isScalaOrJava
     } {
       targets.asScala.foreach { target =>
-        buildTargets.linkSourceFile(target, source)
+        data.linkSourceFile(target, source)
       }
-      indexSourceFile(source, Some(sourceItem), targets.asScala.headOption)
+      indexSourceFile(
+        source,
+        Some(sourceItem),
+        targets.asScala.headOption,
+        Seq(data)
+      )
     }
   }
 
   private def indexDependencySources(
+      data: BuildTargets.WritableData,
       dependencySources: b.DependencySourcesResult
   ): Unit = {
     // Track used Jars so that we can
     // remove cached symbols from Jars
     // that are not used
     val usedJars = mutable.HashSet.empty[AbsolutePath]
-    val jdkSources = JdkSources(userConfig().javaHome)
-    jdkSources match {
-      case Some(zip) =>
-        usedJars += zip
-        addSourceJarSymbols(zip)
-      case None =>
-        scribe.warn(
-          s"Could not find java sources in ${userConfig().javaHome}. Java symbols will not be available."
-        )
-    }
     val isVisited = new ju.HashSet[String]()
     for {
       item <- dependencySources.getItems.asScala
-      scalaTarget <- buildTargets.scalaTarget(item.getTarget)
+      scalaTarget <- data.scalaTarget(item.getTarget)
       sourceUri <- Option(item.getSources).toList.flatMap(_.asScala)
       path = sourceUri.toAbsolutePath
-      _ = buildTargets.addDependencySource(path, item.getTarget)
-      _ = jdkSources.foreach(source =>
-        buildTargets.addDependencySource(source, item.getTarget)
-      )
+      _ = data.addDependencySource(path, item.getTarget)
       if !isVisited.contains(sourceUri)
     } {
       isVisited.add(sourceUri)
@@ -345,10 +364,49 @@ final case class Indexer(
     )
   }
 
+  private def indexJdkSources(
+      data: BuildTargets.WritableData,
+      dependencySources: b.DependencySourcesResult
+  ): Unit = {
+    // Track used Jars so that we can
+    // remove cached symbols from Jars
+    // that are not used
+    val usedJars = mutable.HashSet.empty[AbsolutePath]
+    val jdkSources = JdkSources(userConfig().javaHome)
+    jdkSources match {
+      case Some(zip) =>
+        usedJars += zip
+        addSourceJarSymbols(zip)
+      case None =>
+        scribe.warn(
+          s"Could not find java sources in ${userConfig().javaHome}. Java symbols will not be available."
+        )
+    }
+    for {
+      item <- dependencySources.getItems.asScala
+    } {
+      jdkSources.foreach(source =>
+        data.addDependencySource(source, item.getTarget)
+      )
+    }
+    // Schedule removal of unused toplevel symbols from cache
+    if (usedJars.nonEmpty)
+      sh.schedule(
+        new Runnable {
+          override def run(): Unit = {
+            tables.jarSymbols.deleteNotUsedTopLevels(usedJars.toArray)
+          }
+        },
+        2,
+        TimeUnit.SECONDS
+      )
+  }
+
   private def indexSourceFile(
       source: AbsolutePath,
       sourceItem: Option[AbsolutePath],
-      targetOpt: Option[b.BuildTargetIdentifier]
+      targetOpt: Option[b.BuildTargetIdentifier],
+      data: Seq[BuildTargets.Data]
   ): Unit = {
 
     try {
@@ -357,7 +415,13 @@ final case class Indexer(
         val dialect = {
           val scalaVersion =
             targetOpt
-              .flatMap(buildTargets.scalaInfo)
+              .flatMap(id =>
+                data.iterator
+                  .flatMap(_.buildTargetInfo.get(id).iterator)
+                  .toStream
+                  .headOption
+                  .flatMap(_.asScalaBuildTarget)
+              )
               .map(_.getScalaVersion())
               .getOrElse(
                 scalaVersionSelector.fallbackScalaVersion(
@@ -433,7 +497,12 @@ final case class Indexer(
       path <- paths.iterator
       if path.isScalaOrJava
     } {
-      indexSourceFile(path, buildTargets.inverseSourceItem(path), None)
+      indexSourceFile(
+        path,
+        buildTargets.inverseSourceItem(path),
+        None,
+        Seq(buildTargetsData)
+      )
     }
   }
 

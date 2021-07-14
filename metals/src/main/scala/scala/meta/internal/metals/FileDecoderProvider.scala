@@ -259,7 +259,8 @@ final class FileDecoderProvider(
       newExtension: String
   ): Option[PathInfo] = {
     for {
-      targetId <- buildTargets.sourceBuildTargets(sourceFile).headOption
+      targets <- buildTargets.sourceBuildTargets(sourceFile)
+      targetId <- targets.headOption
       target <- buildTargets.scalaTarget(targetId)
       sourceRoot <- buildTargets.inverseSourceItem(sourceFile)
       classDir = target.classDirectory.toAbsolutePath

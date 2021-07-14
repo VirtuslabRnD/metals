@@ -12,7 +12,6 @@ import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.util.control.NonFatal
 
-import scala.meta.internal.io.PathIO
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.metals.ammonite.Ammonite
 import scala.meta.internal.mtags.Symbol
@@ -29,32 +28,12 @@ import ch.epfl.scala.bsp4j.WorkspaceBuildTargetsResult
  * In-memory cache for looking up build server metadata.
  */
 final class BuildTargets(
+    workspace: () => AbsolutePath,
+    tables: Option[Tables],
     ammoniteBuildServer: BuildTargetIdentifier => Option[BuildServerConnection]
 ) {
-  private var workspace = PathIO.workingDirectory
-  def setWorkspaceDirectory(newWorkspace: AbsolutePath): Unit = {
-    workspace = newWorkspace
-  }
-  private var tables: Option[Tables] = None
-  private val sourceItemsToBuildTarget =
-    TrieMap.empty[AbsolutePath, ConcurrentLinkedQueue[BuildTargetIdentifier]]
-  private val buildTargetInfo =
-    TrieMap.empty[BuildTargetIdentifier, BuildTarget]
-  private val scalacTargetInfo =
-    TrieMap.empty[BuildTargetIdentifier, ScalacOptionsItem]
-  private val inverseDependencies =
-    TrieMap.empty[BuildTargetIdentifier, ListBuffer[BuildTargetIdentifier]]
-  private val buildTargetSources =
-    TrieMap.empty[BuildTargetIdentifier, util.Set[AbsolutePath]]
-  private val inverseDependencySources =
-    TrieMap.empty[AbsolutePath, Set[BuildTargetIdentifier]]
-  private val isSourceRoot =
-    ConcurrentHashSet.empty[AbsolutePath]
-  // if workspace contains symlinks, original source items are kept here and source items dealiased
-  private val originalSourceItems = ConcurrentHashSet.empty[AbsolutePath]
-
-  private val targetToConnection =
-    new mutable.HashMap[BuildTargetIdentifier, BuildServerConnection]
+  private var data: BuildTargets.DataSeq =
+    BuildTargets.DataSeq(BuildTargets.Data.create(), Nil)
 
   val buildTargetsOrder: BuildTargetIdentifier => Int = {
     (t: BuildTargetIdentifier) =>
@@ -77,57 +56,24 @@ final class BuildTargets(
       score
   }
 
-  def setTables(newTables: Tables): Unit = {
-    tables = Some(newTables)
-  }
-
-  def reset(): Unit = {
-    sourceItemsToBuildTarget.values.foreach(_.clear())
-    sourceItemsToBuildTarget.clear()
-    buildTargetInfo.clear()
-    scalacTargetInfo.clear()
-    inverseDependencies.clear()
-    buildTargetSources.clear()
-    inverseDependencySources.clear()
-    isSourceRoot.clear()
-  }
   def sourceItems: Iterable[AbsolutePath] =
-    sourceItemsToBuildTarget.keys
+    data.tail.foldLeft(data.head.sourceItemsToBuildTarget.keys)(
+      _ ++ _.sourceItemsToBuildTarget.keys
+    )
   def sourceItemsToBuildTargets
       : Iterator[(AbsolutePath, JIterable[BuildTargetIdentifier])] =
-    sourceItemsToBuildTarget.iterator
+    data.iterator.flatMap(_.sourceItemsToBuildTarget.iterator)
   def scalacOptions: Iterable[ScalacOptionsItem] =
-    scalacTargetInfo.values
+    data.iterable.flatMap(_.scalacTargetInfo.values)
 
   def allBuildTargetIds: Seq[BuildTargetIdentifier] =
     all.toSeq.map(_.info.getId())
   def all: Iterator[ScalaTarget] =
-    for {
-      (_, target) <- buildTargetInfo.iterator
-      scalaTarget <- toScalaTarget(target)
-    } yield scalaTarget
-
+    data.iterator.flatMap(_.all)
+  def allScalaTargets: Iterator[(BuildTargets.Data, ScalaTarget)] =
+    data.iterator.flatMap(_.allScalaTargets)
   def scalaTarget(id: BuildTargetIdentifier): Option[ScalaTarget] =
-    for {
-      target <- buildTargetInfo.get(id)
-      scalaTarget <- toScalaTarget(target)
-    } yield scalaTarget
-
-  private def toScalaTarget(target: BuildTarget): Option[ScalaTarget] = {
-    for {
-      scalac <- scalacTargetInfo.get(target.getId)
-      scalaTarget <- target.asScalaBuildTarget
-    } yield {
-      val autoImports = target.asSbtBuildTarget.map(_.getAutoImports.asScala)
-      ScalaTarget(
-        target,
-        scalaTarget,
-        scalac,
-        autoImports,
-        target.getDataKind() == "sbt"
-      )
-    }
-  }
+    data.iterator.flatMap(_.scalaTarget(id).iterator).toStream.headOption
 
   def allWorkspaceJars: Iterator[AbsolutePath] = {
     val isVisited = new ju.HashSet[AbsolutePath]()
@@ -142,44 +88,24 @@ final class BuildTargets(
     ).flatten
   }
 
-  def addSourceItem(
-      sourceItem: AbsolutePath,
-      buildTarget: BuildTargetIdentifier
-  ): Unit = {
-    val dealiased = sourceItem.dealias
-    if (dealiased != sourceItem)
-      originalSourceItems.add(sourceItem)
-
-    val queue = sourceItemsToBuildTarget.getOrElseUpdate(
-      dealiased,
-      new ConcurrentLinkedQueue()
-    )
-    queue.add(buildTarget)
-  }
-
-  def onCreate(source: AbsolutePath): Unit = {
-    for {
-      buildTarget <- sourceBuildTargets(source)
-    } {
-      linkSourceFile(buildTarget, source)
-    }
-  }
-
   def buildTargetSources(
       id: BuildTargetIdentifier
-  ): Iterable[AbsolutePath] = {
-    this.buildTargetSources.get(id) match {
-      case None => Nil
-      case Some(value) => value.asScala
-    }
-  }
+  ): Iterable[AbsolutePath] =
+    data.iterator
+      .flatMap(_.buildTargetSources.get(id).iterator)
+      .toStream
+      .headOption
+      .toSeq
+      .flatMap(_.asScala)
 
   def buildTargetTransitiveSources(
       id: BuildTargetIdentifier
   ): Iterator[AbsolutePath] = {
     for {
       dependency <- buildTargetTransitiveDependencies(id).iterator
-      sources <- buildTargetSources.get(dependency).iterator
+      sources <- data.iterator
+        .flatMap(_.buildTargetSources.get(dependency).iterator)
+        .take(1)
       source <- sources.asScala.iterator
     } yield source
   }
@@ -205,32 +131,13 @@ final class BuildTargets(
     isVisited
   }
 
-  def linkSourceFile(id: BuildTargetIdentifier, source: AbsolutePath): Unit = {
-    val set = buildTargetSources.getOrElseUpdate(id, ConcurrentHashSet.empty)
-    set.add(source)
-  }
-
-  def addWorkspaceBuildTargets(result: WorkspaceBuildTargetsResult): Unit = {
-    result.getTargets.asScala.foreach { target =>
-      buildTargetInfo(target.getId) = target
-      target.getDependencies.asScala.foreach { dependency =>
-        val buf =
-          inverseDependencies.getOrElseUpdate(dependency, ListBuffer.empty)
-        buf += target.getId
-      }
-    }
-  }
-
-  def addScalacOptions(result: ScalacOptionsResult): Unit = {
-    result.getItems.asScala.foreach { item =>
-      scalacTargetInfo(item.getTarget) = item
-    }
-  }
-
   def info(
       buildTarget: BuildTargetIdentifier
   ): Option[BuildTarget] =
-    buildTargetInfo.get(buildTarget)
+    data.iterator
+      .flatMap(_.buildTargetInfo.get(buildTarget).iterator)
+      .toStream
+      .headOption
   def scalaInfo(
       buildTarget: BuildTargetIdentifier
   ): Option[ScalaBuildTarget] =
@@ -239,7 +146,10 @@ final class BuildTargets(
   def scalacOptions(
       buildTarget: BuildTargetIdentifier
   ): Option[ScalacOptionsItem] =
-    scalacTargetInfo.get(buildTarget)
+    data.iterator
+      .flatMap(_.scalacTargetInfo.get(buildTarget).iterator)
+      .toStream
+      .headOption
 
   def workspaceDirectory(
       buildTarget: BuildTargetIdentifier
@@ -254,8 +164,7 @@ final class BuildTargets(
   ): Option[BuildTargetIdentifier] = {
     val buildTargets = sourceBuildTargets(source)
     val orSbtBuildTarget =
-      if (buildTargets.isEmpty) sbtBuildScalaTarget(source).toIterable
-      else buildTargets
+      buildTargets.getOrElse(sbtBuildScalaTarget(source).toIterable)
     if (orSbtBuildTarget.isEmpty) {
       tables
         .flatMap(_.dependencySources.getBuildTarget(source))
@@ -298,14 +207,15 @@ final class BuildTargets(
   def inferBuildTarget(
       source: AbsolutePath
   ): Option[BuildTargetIdentifier] = {
-    val readonly = workspace.resolve(Directories.readonly)
+    val readonly = workspace().resolve(Directories.readonly)
     source.toRelativeInside(readonly) match {
       case Some(rel) =>
         val names = rel.toNIO.iterator().asScala.toList.map(_.filename)
         names match {
           case Directories.dependenciesName :: jarName :: _ =>
             // match build target by source jar name
-            inverseDependencySources
+            data.iterator
+              .flatMap(_.inverseDependencySources.iterator)
               .collectFirst {
                 case (path, ids) if path.filename == jarName && ids.nonEmpty =>
                   ids.head
@@ -317,18 +227,22 @@ final class BuildTargets(
         // else it can be a source file inside a jar
         val fromJar = jarPath(source)
           .flatMap { jar =>
-            all.find { scalaTarget =>
+            allScalaTargets.find { case (_, scalaTarget) =>
               scalaTarget.jarClasspath.contains(jar)
             }
           }
-          .map(_.id)
-        fromJar.foreach(addSourceItem(source, _))
-        fromJar
+        for ((data0, target) <- fromJar)
+          data0.addSourceItem(source, target.id)
+        fromJar.map(_._2.id)
     }
   }
 
   def findByDisplayName(name: String): Option[BuildTarget] = {
-    buildTargetInfo.values.find(_.getDisplayName() == name)
+    data.iterator
+      .flatMap(_.buildTargetInfo.valuesIterator)
+      .find(_.getDisplayName() == name)
+      .toStream
+      .headOption
   }
 
   private def jarPath(source: AbsolutePath): Option[AbsolutePath] = {
@@ -349,7 +263,8 @@ final class BuildTargets(
   ): Option[BuildTargetIdentifier] = {
     val targetMetaBuildDir =
       if (file.isSbt) file.parent.resolve("project") else file.parent
-    buildTargetInfo.values
+    data.iterator
+      .flatMap(_.buildTargetInfo.valuesIterator)
       .find { target =>
         val isMetaBuild = target.getDataKind == "sbt"
         if (isMetaBuild) {
@@ -361,6 +276,8 @@ final class BuildTargets(
         }
       }
       .map(_.getId())
+      .toStream
+      .headOption
   }
 
   case class InferredBuildTarget(
@@ -404,30 +321,33 @@ final class BuildTargets(
 
   def sourceBuildTargets(
       sourceItem: AbsolutePath
-  ): Iterable[BuildTargetIdentifier] = {
-    sourceItemsToBuildTarget
-      .collectFirst {
-        case (source, buildTargets)
-            if sourceItem.toNIO.getFileSystem == source.toNIO.getFileSystem &&
-              sourceItem.toNIO.startsWith(source.toNIO) =>
-          buildTargets.asScala
-      }
-      .getOrElse(Iterable.empty)
-  }
+  ): Option[Iterable[BuildTargetIdentifier]] =
+    data.iterator
+      .flatMap(_.sourceBuildTargets(sourceItem).iterator)
+      .toStream
+      .headOption
 
   def inverseSourceItem(source: AbsolutePath): Option[AbsolutePath] =
     sourceItems.find(item => source.toNIO.startsWith(item.toNIO))
 
   def originalInverseSourceItem(source: AbsolutePath): Option[AbsolutePath] =
-    originalSourceItems.asScala.find(item =>
-      source.toNIO.startsWith(item.dealias.toNIO)
-    )
+    data.iterator
+      .flatMap(_.originalSourceItems.asScala.iterator)
+      .find(item => source.toNIO.startsWith(item.dealias.toNIO))
 
   def isInverseDependency(
       query: BuildTargetIdentifier,
       roots: List[BuildTargetIdentifier]
   ): Boolean = {
-    BuildTargets.isInverseDependency(query, roots, inverseDependencies.get)
+    BuildTargets.isInverseDependency(
+      query,
+      roots,
+      id =>
+        data.iterator
+          .flatMap(_.inverseDependencies.get(id).iterator)
+          .toStream
+          .headOption
+    )
   }
   def inverseDependencyLeaves(
       target: BuildTargetIdentifier
@@ -442,62 +362,72 @@ final class BuildTargets(
   private def computeInverseDependencies(
       target: BuildTargetIdentifier
   ): BuildTargets.InverseDependencies = {
-    BuildTargets.inverseDependencies(List(target), inverseDependencies.get)
-  }
-
-  def addDependencySource(
-      sourcesJar: AbsolutePath,
-      target: BuildTargetIdentifier
-  ): Unit = {
-    val acc = inverseDependencySources.getOrElse(sourcesJar, Set.empty)
-    inverseDependencySources(sourcesJar) = acc + target
+    BuildTargets.inverseDependencies(
+      List(target),
+      id =>
+        data.iterator
+          .flatMap(_.inverseDependencies.get(id).iterator)
+          .toStream
+          .headOption
+    )
   }
 
   def inverseDependencySource(
       sourceJar: AbsolutePath
   ): collection.Set[BuildTargetIdentifier] = {
-    inverseDependencySources.get(sourceJar).getOrElse(Set.empty)
+    data.iterator
+      .flatMap(_.inverseDependencySources.get(sourceJar).iterator)
+      .toStream
+      .headOption
+      .getOrElse(Set.empty)
   }
 
-  def addSourceRoot(root: AbsolutePath): Unit = {
-    isSourceRoot.add(root)
-  }
   def sourceRoots: Iterable[AbsolutePath] = {
-    isSourceRoot.asScala
+    data.iterable.flatMap(_.isSourceRoot.asScala)
   }
 
   def isInsideSourceRoot(path: AbsolutePath): Boolean = {
-    !isSourceRoot.contains(path) &&
-    isSourceRoot.asScala.exists { root => path.toNIO.startsWith(root.toNIO) }
-  }
-
-  def resetConnections(
-      idToConn: List[(BuildTargetIdentifier, BuildServerConnection)]
-  ): Unit = {
-    targetToConnection.clear()
-    idToConn.foreach { case (id, conn) => targetToConnection.put(id, conn) }
+    data.iterator.exists(_.isSourceRoot.contains(path)) &&
+    data.iterator.flatMap(_.isSourceRoot.asScala.iterator).exists { root =>
+      path.toNIO.startsWith(root.toNIO)
+    }
   }
 
   def buildServerOf(
       id: BuildTargetIdentifier
   ): Option[BuildServerConnection] = {
-    ammoniteBuildServer(id).orElse(targetToConnection.get(id))
+    ammoniteBuildServer(id).orElse(
+      data.iterator
+        .flatMap(_.targetToConnection.get(id).iterator)
+        .toStream
+        .headOption
+    )
   }
+
+  def addData(data: BuildTargets.Data): Unit =
+    this.data = BuildTargets.DataSeq(data, this.data.head :: this.data.tail)
 }
 
 object BuildTargets {
 
-  def withAmmonite(ammonite: () => Ammonite): BuildTargets = {
+  def withAmmonite(
+      workspace: () => AbsolutePath,
+      tables: Option[Tables],
+      ammonite: () => Ammonite
+  ): BuildTargets = {
     val ammoniteBuildServerF =
       (id: BuildTargetIdentifier) =>
         if (Ammonite.isAmmBuildTarget(id)) ammonite().buildServer
         else None
 
-    new BuildTargets(ammoniteBuildServerF)
+    new BuildTargets(workspace, tables, ammoniteBuildServerF)
   }
 
-  def withoutAmmonite: BuildTargets =
-    new BuildTargets(_ => None)
+  def withoutAmmonite(
+      workspace: () => AbsolutePath,
+      tables: Option[Tables]
+  ): BuildTargets =
+    new BuildTargets(workspace, tables, _ => None)
 
   def isInverseDependency(
       query: BuildTargetIdentifier,
@@ -570,5 +500,204 @@ object BuildTargets {
       visited: collection.Set[BuildTargetIdentifier],
       leaves: collection.Set[BuildTargetIdentifier]
   )
+
+  trait Data {
+    def sourceItemsToBuildTarget
+        : scala.collection.Map[AbsolutePath, ConcurrentLinkedQueue[
+          BuildTargetIdentifier
+        ]]
+    def buildTargetInfo
+        : scala.collection.Map[BuildTargetIdentifier, BuildTarget]
+    def scalacTargetInfo
+        : scala.collection.Map[BuildTargetIdentifier, ScalacOptionsItem]
+    def inverseDependencies
+        : scala.collection.Map[BuildTargetIdentifier, ListBuffer[
+          BuildTargetIdentifier
+        ]]
+    def buildTargetSources
+        : scala.collection.Map[BuildTargetIdentifier, util.Set[AbsolutePath]]
+    def inverseDependencySources
+        : scala.collection.Map[AbsolutePath, Set[BuildTargetIdentifier]]
+    def isSourceRoot: java.util.Set[AbsolutePath]
+    // if workspace contains symlinks, original source items are kept here and source items dealiased
+    def originalSourceItems: java.util.Set[AbsolutePath]
+
+    def targetToConnection
+        : scala.collection.Map[BuildTargetIdentifier, BuildServerConnection]
+    def sourceBuildTargets(
+        sourceItem: AbsolutePath
+    ): Option[Iterable[BuildTargetIdentifier]]
+
+    def all: Iterator[ScalaTarget]
+    def allScalaTargets: Iterator[(BuildTargets.Data, ScalaTarget)]
+    def scalaTarget(id: BuildTargetIdentifier): Option[ScalaTarget]
+
+    def addSourceItem(
+        sourceItem: AbsolutePath,
+        buildTarget: BuildTargetIdentifier
+    ): Unit
+  }
+
+  final case class DataSeq(head: Data, tail: List[Data]) {
+    private lazy val list = head :: tail
+    def iterator = list.iterator
+    def iterable = list.toIterable
+  }
+
+  trait WritableData extends Data {
+    def linkSourceFile(id: BuildTargetIdentifier, source: AbsolutePath): Unit
+    def reset(): Unit
+    def addWorkspaceBuildTargets(result: WorkspaceBuildTargetsResult): Unit
+    def addScalacOptions(result: ScalacOptionsResult): Unit
+    def addDependencySource(
+        sourcesJar: AbsolutePath,
+        target: BuildTargetIdentifier
+    ): Unit
+    def resetConnections(
+        idToConn: List[(BuildTargetIdentifier, BuildServerConnection)]
+    ): Unit
+    def onCreate(source: AbsolutePath): Unit
+  }
+
+  object Data {
+    def create(): WritableData =
+      new DataImpl
+  }
+
+  private final class DataImpl extends WritableData {
+
+    val sourceItemsToBuildTarget =
+      TrieMap.empty[AbsolutePath, ConcurrentLinkedQueue[BuildTargetIdentifier]]
+    val buildTargetInfo =
+      TrieMap.empty[BuildTargetIdentifier, BuildTarget]
+    val scalacTargetInfo =
+      TrieMap.empty[BuildTargetIdentifier, ScalacOptionsItem]
+    val inverseDependencies =
+      TrieMap.empty[BuildTargetIdentifier, ListBuffer[BuildTargetIdentifier]]
+    val buildTargetSources =
+      TrieMap.empty[BuildTargetIdentifier, util.Set[AbsolutePath]]
+    val inverseDependencySources =
+      TrieMap.empty[AbsolutePath, Set[BuildTargetIdentifier]]
+    val isSourceRoot =
+      ConcurrentHashSet.empty[AbsolutePath]
+    // if workspace contains symlinks, original source items are kept here and source items dealiased
+    val originalSourceItems = ConcurrentHashSet.empty[AbsolutePath]
+
+    val targetToConnection =
+      new mutable.HashMap[BuildTargetIdentifier, BuildServerConnection]
+
+    def reset(): Unit = {
+      sourceItemsToBuildTarget.values.foreach(_.clear())
+      sourceItemsToBuildTarget.clear()
+      buildTargetInfo.clear()
+      scalacTargetInfo.clear()
+      inverseDependencies.clear()
+      buildTargetSources.clear()
+      inverseDependencySources.clear()
+      isSourceRoot.clear()
+    }
+
+    def addSourceItem(
+        sourceItem: AbsolutePath,
+        buildTarget: BuildTargetIdentifier
+    ): Unit = {
+      val dealiased = sourceItem.dealias
+      if (dealiased != sourceItem)
+        originalSourceItems.add(sourceItem)
+
+      val queue = sourceItemsToBuildTarget.getOrElseUpdate(
+        dealiased,
+        new ConcurrentLinkedQueue()
+      )
+      queue.add(buildTarget)
+    }
+
+    def linkSourceFile(
+        id: BuildTargetIdentifier,
+        source: AbsolutePath
+    ): Unit = {
+      val set = buildTargetSources.getOrElseUpdate(id, ConcurrentHashSet.empty)
+      set.add(source)
+    }
+
+    def addWorkspaceBuildTargets(result: WorkspaceBuildTargetsResult): Unit = {
+      result.getTargets.asScala.foreach { target =>
+        buildTargetInfo(target.getId) = target
+        target.getDependencies.asScala.foreach { dependency =>
+          val buf =
+            inverseDependencies.getOrElseUpdate(dependency, ListBuffer.empty)
+          buf += target.getId
+        }
+      }
+    }
+
+    def addScalacOptions(result: ScalacOptionsResult): Unit = {
+      result.getItems.asScala.foreach { item =>
+        scalacTargetInfo(item.getTarget) = item
+      }
+    }
+
+    def addDependencySource(
+        sourcesJar: AbsolutePath,
+        target: BuildTargetIdentifier
+    ): Unit = {
+      val acc = inverseDependencySources.getOrElse(sourcesJar, Set.empty)
+      inverseDependencySources(sourcesJar) = acc + target
+    }
+
+    def resetConnections(
+        idToConn: List[(BuildTargetIdentifier, BuildServerConnection)]
+    ): Unit = {
+      targetToConnection.clear()
+      idToConn.foreach { case (id, conn) => targetToConnection.put(id, conn) }
+    }
+
+    def onCreate(source: AbsolutePath): Unit =
+      for (targets <- sourceBuildTargets(source); buildTarget <- targets)
+        linkSourceFile(buildTarget, source)
+
+    def sourceBuildTargets(
+        sourceItem: AbsolutePath
+    ): Option[Iterable[BuildTargetIdentifier]] =
+      sourceItemsToBuildTarget.collectFirst {
+        case (source, buildTargets)
+            if sourceItem.toNIO.getFileSystem == source.toNIO.getFileSystem &&
+              sourceItem.toNIO.startsWith(source.toNIO) =>
+          buildTargets.asScala
+      }
+
+    def all: Iterator[ScalaTarget] =
+      for {
+        (_, target) <- buildTargetInfo.iterator
+        scalaTarget <- toScalaTarget(target)
+      } yield scalaTarget
+    def allScalaTargets: Iterator[(BuildTargets.Data, ScalaTarget)] =
+      for {
+        (_, target) <- buildTargetInfo.iterator
+        scalaTarget <- toScalaTarget(target)
+      } yield (this, scalaTarget)
+    def scalaTarget(id: BuildTargetIdentifier): Option[ScalaTarget] =
+      for {
+        target <- buildTargetInfo.get(id)
+        scalaTarget <- toScalaTarget(target)
+      } yield scalaTarget
+
+    private def toScalaTarget(target: BuildTarget): Option[ScalaTarget] = {
+      for {
+        scalac <- scalacTargetInfo.get(target.getId)
+        scalaTarget <- target.asScalaBuildTarget
+      } yield {
+        val autoImports = target.asSbtBuildTarget.map(_.getAutoImports.asScala)
+        ScalaTarget(
+          target,
+          scalaTarget,
+          scalac,
+          autoImports,
+          target.getDataKind() == "sbt"
+        )
+      }
+    }
+
+  }
 
 }

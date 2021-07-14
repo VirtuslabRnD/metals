@@ -153,7 +153,10 @@ class MetalsLanguageServer(
   val excludedPackageHandler: ExcludedPackagesHandler =
     new ExcludedPackagesHandler(userConfig.excludedPackages)
   var ammonite: Ammonite = _
-  val buildTargets: BuildTargets = BuildTargets.withAmmonite(() => ammonite)
+  private val mainBuildTargetsData = BuildTargets.Data.create()
+  val buildTargets: BuildTargets =
+    BuildTargets.withAmmonite(() => workspace, Some(tables), () => ammonite)
+  buildTargets.addData(mainBuildTargetsData)
   private val buildTargetClasses =
     new BuildTargetClasses(buildTargets)
 
@@ -338,9 +341,7 @@ class MetalsLanguageServer(
         documentSymbolProvider.setSupportsHierarchicalDocumentSymbols(
           initializeParams.supportsHierarchicalDocumentSymbols
         )
-        buildTargets.setWorkspaceDirectory(workspace)
         tables = register(new Tables(() => workspace, time, clientConfig))
-        buildTargets.setTables(tables)
         workspaceReload = new WorkspaceReload(
           () => workspace,
           languageClient,
@@ -1136,7 +1137,7 @@ class MetalsLanguageServer(
     ) {
       event.eventType match {
         case EventType.Create =>
-          buildTargets.onCreate(path)
+          mainBuildTargetsData.onCreate(path)
         case _ =>
       }
       onChange(List(path)).asJava
@@ -1482,6 +1483,7 @@ class MetalsLanguageServer(
     referencesProvider,
     workspaceSymbols,
     buildTargets,
+    mainBuildTargetsData,
     interactiveSemanticdbs,
     buildClient,
     semanticDBIndexer,
@@ -1523,7 +1525,7 @@ class MetalsLanguageServer(
       sess => { bspSession = sess },
       statusBar,
       doctor,
-      buildTargets,
+      mainBuildTargetsData,
       diagnostics,
       bloopServers
     )
@@ -1571,7 +1573,8 @@ class MetalsLanguageServer(
       toIndexSource = path => {
         if (path.isAmmoniteScript)
           for {
-            target <- buildTargets.sourceBuildTargets(path).headOption
+            targets <- buildTargets.sourceBuildTargets(path)
+            target <- targets.headOption
             toIndex <- ammonite.generatedScalaPath(target, path)
           } yield toIndex
         else

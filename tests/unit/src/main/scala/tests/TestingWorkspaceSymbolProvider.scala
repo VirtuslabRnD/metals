@@ -15,7 +15,7 @@ object TestingWorkspaceSymbolProvider {
   ): WorkspaceSymbolProvider = {
     new WorkspaceSymbolProvider(
       workspace = () => workspace,
-      buildTargets = BuildTargets.withoutAmmonite,
+      buildTargets = BuildTargets.withoutAmmonite(() => workspace, None),
       index = index,
       new ExcludedPackagesHandler().isExcludedPackage,
       bucketSize = bucketSize

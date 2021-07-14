@@ -15,6 +15,7 @@ import scala.meta.io.AbsolutePath
 
 import munit.FunSuite
 import munit.TestOptions
+import scala.meta.internal.io.PathIO
 
 class ClassBreakpointSuite extends FunSuite {
 
@@ -172,7 +173,8 @@ class ClassBreakpointSuite extends FunSuite {
   ): Unit =
     test(name) {
       val buffers = Buffers()
-      val buildTargets = new BuildTargets(_ => None)
+      val buildTargets =
+        new BuildTargets(() => PathIO.workingDirectory, None, _ => None)
       val selector = ScalaVersionSelector(
         () => UserConfiguration(fallbackScalaVersion = Some(scalaVersion)),
         buildTargets

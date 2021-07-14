@@ -20,6 +20,7 @@ import munit.Location
 import munit.TestOptions
 import org.eclipse.lsp4j.CodeActionContext
 import org.eclipse.lsp4j.CodeActionParams
+import scala.meta.internal.io.PathIO
 
 class ExtractRenameMemberLspSuite
     extends BaseCodeActionLspSuite("extractClass") {
@@ -446,7 +447,8 @@ class ExtractRenameMemberLspSuite
   ): Unit =
     test(name) {
       val buffers = Buffers()
-      val buildTargets = new BuildTargets(_ => None)
+      val buildTargets =
+        new BuildTargets(() => PathIO.workingDirectory, None, _ => None)
       val selector = ScalaVersionSelector(
         () => UserConfiguration(fallbackScalaVersion = Some(scalaVersion)),
         buildTargets

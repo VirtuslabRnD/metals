@@ -15,13 +15,15 @@ import scala.meta.io.AbsolutePath
 
 import org.eclipse.{lsp4j => l}
 import tests.BuildInfo.testResourceDirectory
+import scala.meta.internal.io.PathIO
 
 abstract class FoldingRangeSuite(
     scalaVersion: String,
     directory: String
 ) extends DirectoryExpectSuite(s"$directory/expect") {
   private val buffers = Buffers()
-  private val buildTargets = new BuildTargets(_ => None)
+  private val buildTargets =
+    new BuildTargets(() => PathIO.workingDirectory, None, _ => None)
   private val selector =
     ScalaVersionSelector(
       () => UserConfiguration(fallbackScalaVersion = Some(scalaVersion)),
