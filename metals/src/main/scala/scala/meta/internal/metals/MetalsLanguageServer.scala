@@ -569,7 +569,6 @@ class MetalsLanguageServer(
           languageClient,
           fingerprints,
           charset,
-          diagnostics,
           () => focusedDocument,
           clientConfig,
           () => userConfig,
