@@ -84,6 +84,7 @@ import scala.meta.ls.handlers.ExecuteCommandHandler
 import scala.util.Success
 import scala.util.Failure
 import scala.meta.internal.worksheets.WorksheetPublisher
+import scala.meta.internal.metals.scalacli.ScalaCli
 
 class MetalsLanguageServer(
     ec: ExecutionContextExecutorService,
@@ -386,7 +387,10 @@ class MetalsLanguageServer(
     },
     onBuildTargetDidChangeFunc = { params =>
       val ammoniteBuildChanged =
-        params.getChanges.asScala.exists(_.getTarget.getUri.isAmmoniteScript)
+        params.getChanges.asScala.exists { change =>
+          val connOpt = buildTargets.buildServerOf(change.getTarget)
+          connOpt.nonEmpty && connOpt == ammonite.buildServer
+        }
       if (ammoniteBuildChanged)
         ammonite
           .importBuild()
@@ -395,7 +399,22 @@ class MetalsLanguageServer(
             case Failure(exception) =>
               scribe.error("Error re-importing Ammonite build", exception)
           })(threads.dummyEc)
-      ammoniteBuildChanged
+
+      val scalaCliBuildChanged =
+        params.getChanges.asScala.exists { change =>
+          val connOpt = buildTargets.buildServerOf(change.getTarget)
+          connOpt.nonEmpty && connOpt == scalaCli.buildServer
+        }
+      if (scalaCliBuildChanged)
+        scalaCli
+          .importBuild()
+          .onComplete({
+            case Success(()) =>
+            case Failure(exception) =>
+              scribe.error("Error re-importing Scala CLI build", exception)
+          })(threads.dummyEc)
+
+      ammoniteBuildChanged || scalaCliBuildChanged
     }
   )
   private val bloopServers = BloopServers(
@@ -635,6 +654,25 @@ class MetalsLanguageServer(
   )
   buildTargets.addData(ammonite.buildTargetsData)
 
+  val scalaCli: ScalaCli = register(
+    new ScalaCli(
+      compilers,
+      compilations,
+      statusBar,
+      buffers,
+      () => indexer.profiledIndexWorkspace(() => ()),
+      diagnostics,
+      () => workspace,
+      tables,
+      threads,
+      buildClient,
+      languageClient,
+      () => clientConfig.initialConfig,
+      ec
+    )
+  )
+  buildTargets.addData(scalaCli.buildTargetsData)
+
   private val indexer = scala.meta.ls.Indexer(
     workspaceReload,
     doctor,
@@ -653,7 +691,8 @@ class MetalsLanguageServer(
           mainBuildTargetsData,
           ImportedBuild.fromList(buildServerManager.lastImportedBuilds)
         ),
-        ("ammonite", ammonite.buildTargetsData, ammonite.lastImportedBuild)
+        ("ammonite", ammonite.buildTargetsData, ammonite.lastImportedBuild),
+        ("scala-cli", scalaCli.buildTargetsData, scalaCli.lastImportedBuild)
       ),
     clientConfig,
     definitionIndex,
@@ -1564,6 +1603,7 @@ class MetalsLanguageServer(
     popupChoiceReset,
     newFileProvider,
     ammonite,
+    scalaCli,
     newProjectProvider,
     worksheetProvider,
     codeActionProvider,
