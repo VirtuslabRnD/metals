@@ -2,7 +2,7 @@ name: CI
 on:
   push:
     branches:
-      - main 
+      - scala-cli-v0
   pull_request:
 jobs:
   unit:
