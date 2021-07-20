@@ -47,6 +47,7 @@ import scala.meta.internal.builds.BuildTools
 import scala.meta.internal.metals.Tables
 import scala.meta.internal.bsp.BspConfigGenerator
 import scala.meta.ls.BuildServerManager
+import scala.meta.internal.metals.scalacli.ScalaCli
 
 final case class ExecuteCommandHandler(
     indexWorkspaceSources: () => Unit,
@@ -71,6 +72,7 @@ final case class ExecuteCommandHandler(
     popupChoiceReset: PopupChoiceReset,
     newFileProvider: NewFileProvider,
     ammonite: Ammonite,
+    scalaCli: ScalaCli,
     newProjectProvider: NewProjectProvider,
     worksheetProvider: WorksheetProvider,
     codeActionProvider: CodeActionProvider,
@@ -99,6 +101,7 @@ final case class ExecuteCommandHandler(
     }
 
     val command = Option(params.getCommand).getOrElse("")
+    scribe.info(s"got command '$command'")
     command.stripPrefix("metals.") match {
       case ServerCommands.ScanWorkspaceSources() =>
         Future {
@@ -280,6 +283,32 @@ final case class ExecuteCommandHandler(
         ammonite.start().asJavaObject
       case ServerCommands.StopAmmoniteBuildServer() =>
         ammonite.stop()
+
+      case ServerCommands.StartScalaCliServer() =>
+        scribe.info("got scala-cli-start command")
+        val f = focusedDocument().map(_.parent) match {
+          case None => Future.unit
+          case Some(newDir) =>
+            val workspace0 = workspace()
+            val updated =
+              if (newDir.toNIO.startsWith(workspace0.toNIO)) {
+                val relPath = workspace0.toNIO.relativize(newDir.toNIO)
+                val segments =
+                  relPath.iterator().asScala.map(_.toString).toVector
+                val idx = segments.indexOf(".metals")
+                if (idx < 0) newDir
+                else
+                  AbsolutePath(
+                    segments.take(idx).foldLeft(workspace0.toNIO)(_.resolve(_))
+                  )
+              } else newDir
+            if (scalaCli.roots.contains(updated)) Future.unit
+            else scalaCli.start(scalaCli.roots :+ updated)
+        }
+        f.asJavaObject
+      case ServerCommands.StopScalaCliServer() =>
+        scalaCli.stop()
+
       case ServerCommands.NewScalaProject() =>
         newProjectProvider.createNewProjectFromTemplate().asJavaObject
 

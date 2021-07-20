@@ -398,6 +398,18 @@ object ServerCommands {
     "Stop Ammonite build server"
   )
 
+  val StartScalaCliServer = new Command(
+    "scala-cli-start",
+    "Start Scala CLI server",
+    "Start Scala CLI server"
+  )
+
+  val StopScalaCliServer = new Command(
+    "scala-cli-stop",
+    "Stop Scala CLI server",
+    "Stop Scala CLI server"
+  )
+
   def all: List[Command] =
     List(
       AnalyzeStacktrace,
@@ -423,7 +435,9 @@ object ServerCommands {
       StartAmmoniteBuildServer,
       StartDebugAdapter,
       StopAmmoniteBuildServer,
-      SuperMethodHierarchy
+      SuperMethodHierarchy,
+      StartScalaCliServer,
+      StopScalaCliServer
     )
 }
 
