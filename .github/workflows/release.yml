@@ -1,7 +1,7 @@
 name: Release
 on:
   push:
-    branches: [main]
+    branches: [scala-cli-v1]
     tags: ["*"]
 jobs:
   publish:
