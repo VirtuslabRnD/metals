@@ -16,7 +16,6 @@ jobs:
       - name: Publish
         run: |
           sbt ci-release
-          sbt docs/docusaurusPublishGhpages
         env:
           GIT_USER: scalameta@scalameta.org
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
