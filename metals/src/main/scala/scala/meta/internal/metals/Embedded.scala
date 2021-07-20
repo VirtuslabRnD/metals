@@ -184,7 +184,7 @@ object Embedded {
 
   private def mtagsDependency(scalaVersion: String): Dependency =
     Dependency.of(
-      "org.scalameta",
+      "org.virtuslab",
       s"mtags_$scalaVersion",
       BuildInfo.metalsVersion
     )
