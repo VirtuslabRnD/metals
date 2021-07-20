@@ -92,7 +92,10 @@ object MetalsLogger {
   def newFileWriter(logfile: AbsolutePath): FileWriter =
     FileWriter(pathBuilder = PathBuilder.static(logfile.toNIO)).flushAlways
 
-  def defaultFormat: Formatter = formatter"$date $levelPaddedRight $message"
+  def defaultFormat: Formatter = {
+    import scribe.format._
+    formatter"$time ${string("[")}$levelColored${string("]")} ${green(positionSimple)} - $message$mdc"
+  }
 
   def silent: LoggerSupport =
     new LoggerSupport {
