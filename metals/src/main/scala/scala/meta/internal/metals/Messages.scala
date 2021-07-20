@@ -741,6 +741,33 @@ object Messages {
       )
   }
 
+  object ImportScalaCliProject {
+    val message: String = "Scala CLI project detected."
+    val importAll: String = "Import Scala CLI projects automatically"
+    val doImport: String = "Import"
+    val dismiss: String = "Dismiss"
+    def params(): ShowMessageRequestParams = {
+      val params = new ShowMessageRequestParams(
+        List(importAll, doImport, dismiss)
+          .map(new MessageActionItem(_))
+          .asJava
+      )
+      params.setMessage(message)
+      params.setType(MessageType.Info)
+      params
+    }
+    def ImportFailed(source: String) =
+      new MessageParams(
+        MessageType.Error,
+        s"Error importing Scala CLI project for $source. See the logs for more details."
+      )
+    def Imported =
+      new MessageParams(
+        MessageType.Info,
+        "Scala CLI project imported."
+      )
+  }
+
   object NewScalaProject {
     def selectTheTemplate: String = "Select the template to use"
     def enterName: String =

@@ -21,6 +21,8 @@ import java.nio.charset.Charset
 import scala.concurrent.ExecutionContextExecutorService
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.decorations.SyntheticsDecorationProvider
+import scala.meta.internal.metals.scalacli.ScalaCli
+import scala.meta.internal.metals.BuildTargets
 
 final case class DidOpenHandler(
     focusedDocument: () => Option[AbsolutePath],
@@ -32,7 +34,9 @@ final case class DidOpenHandler(
     buffers: Buffers,
     languageClient: DelegatingLanguageClient,
     interactiveSemanticdbs: InteractiveSemanticdbs,
+    buildTargets: BuildTargets,
     ammonite: Ammonite,
+    scalaCli: ScalaCli,
     compilers: Compilers,
     compilations: Compilations,
     parseTrees: BatchedFunction[AbsolutePath, Unit],
@@ -76,21 +80,33 @@ final case class DidOpenHandler(
         }(ec)
       }(ec)
     } else {
-      if (path.isAmmoniteScript)
-        ammonite.maybeImport(path)
-      val loadFuture = compilers.load(List(path))
-      val compileFuture =
-        compilations.compileFile(path)
-      Future
-        .sequence(
-          List(
-            loadInteractive,
-            loadFuture,
-            compileFuture
+      val triggeredImportOpt =
+        if (path.isAmmoniteScript) {
+          ammonite.maybeImport(path)
+          None
+        } else {
+          val hasBuildTarget = buildTargets.inverseSources(path).nonEmpty
+          if (hasBuildTarget) None
+          else scalaCli.maybeImport(path)
+        }
+      def load(): Future[Unit] = {
+        val loadFuture = compilers.load(List(path))
+        val compileFuture =
+          compilations.compileFile(path)
+        Future
+          .sequence(
+            List(
+              loadInteractive,
+              loadFuture,
+              compileFuture
+            )
           )
-        )
-        .ignoreValue
-        .asJava
+          .ignoreValue
+      }
+      triggeredImportOpt match {
+        case Some(triggeredImport) => triggeredImport.asJava
+        case None => load().asJava
+      }
     }
   }
 }
