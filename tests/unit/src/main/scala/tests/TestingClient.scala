@@ -73,6 +73,9 @@ final class TestingClient(workspace: AbsolutePath, buffers: Buffers)
   var slowTaskHandler: MetalsSlowTaskParams => Option[MetalsSlowTaskResult] = {
     _: MetalsSlowTaskParams => None
   }
+  var showMessageHandler: MessageParams => Unit = { _: MessageParams =>
+    ()
+  }
   var showMessageRequestHandler
       : ShowMessageRequestParams => Option[MessageActionItem] = {
     _: ShowMessageRequestParams => None
@@ -237,6 +240,7 @@ final class TestingClient(workspace: AbsolutePath, buffers: Buffers)
       .incrementAndGet()
   }
   override def showMessage(params: MessageParams): Unit = {
+    showMessageHandler(params)
     showMessages.add(params)
   }
   override def showMessageRequest(

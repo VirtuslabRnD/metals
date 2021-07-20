@@ -20,6 +20,7 @@ final class DismissedNotifications(conn: () => Connection, time: Time) {
   val ReconnectAmmonite = new Notification(10)
   val UpdateScalafmtConf = new Notification(11)
   val ReconnectScalaCli = new Notification(12)
+  val ScalaCliImportAuto = new Notification(13)
 
   class Notification(val id: Int)(implicit name: sourcecode.Name) {
     override def toString: String = s"Notification(${name.value}, $id)"

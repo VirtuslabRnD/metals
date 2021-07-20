@@ -41,6 +41,8 @@ import scala.meta.io.AbsolutePath
 import scala.meta.ls.MetalsThreads
 
 import org.eclipse.lsp4j.services.LanguageClient
+import scala.meta.internal.metals.Messages
+import scala.annotation.tailrec
 
 class ScalaCli(
     compilers: Compilers,
@@ -186,6 +188,74 @@ class ScalaCli(
       }
     Seq(cliCommand, "bsp", "-v", "-v", "-v")
   }
+
+  private def isScalaCliConf(path: AbsolutePath): Boolean = {
+    val name = path.toNIO.getFileName.toString
+    name == "scala.conf" || name.endsWith(".scala.conf")
+  }
+
+  private def scalaCliRoot(path: AbsolutePath): Option[AbsolutePath] = {
+    val workspace0 = workspace()
+    if ((path.isScala) && path.isInside(workspace0)) {
+      @tailrec
+      def maybeRoot(dir: AbsolutePath): Option[AbsolutePath] =
+        if (dir.isInside(workspace0)) {
+          val hasScalaConfFile = dir.list.find(isScalaCliConf).nonEmpty
+          if (hasScalaConfFile) Some(dir)
+          else maybeRoot(dir.parent)
+        } else
+          None
+      maybeRoot(path.parent)
+    } else
+      None
+  }
+
+  private def loaded(path: AbsolutePath): Boolean =
+    roots0.contains(path)
+
+  def maybeImport(path: AbsolutePath): Option[Future[Unit]] =
+    scalaCliRoot(path).filter(!loaded(_)).map { newRoot =>
+      def doImport(): Unit =
+        start(roots0 :+ newRoot).onComplete({
+          case Failure(e) =>
+            languageClient.showMessage(
+              Messages.ImportScalaCliProject.ImportFailed(path.toString)
+            )
+            scribe.warn(s"Error importing Scala CLI project $newRoot", e)
+          case Success(_) =>
+            languageClient.showMessage(
+              Messages.ImportScalaCliProject.Imported
+            )
+            scribe.info(s"Imported Scala CLI project $newRoot")
+        })(ec)
+
+      val autoImport =
+        tables.dismissedNotifications.ScalaCliImportAuto.isDismissed
+
+      if (autoImport) {
+        doImport()
+        Future.unit
+      } else {
+        val futureResp = languageClient
+          .showMessageRequest(Messages.ImportScalaCliProject.params())
+          .asScala
+        futureResp.onComplete({
+          case Failure(e) =>
+            scribe.warn("Error requesting Scala CLI project import", e)
+          case Success(resp) =>
+            resp.getTitle match {
+              case Messages.ImportScalaCliProject.importAll =>
+                tables.dismissedNotifications.ScalaCliImportAuto
+                  .dismissForever()
+                doImport()
+              case Messages.ImportScalaCliProject.doImport =>
+                doImport()
+              case _ =>
+            }
+        })(ec)
+        futureResp.ignoreValue(ec)
+      }
+    }
 
   def start(roots: Seq[AbsolutePath]): Future[Unit] = {
 
