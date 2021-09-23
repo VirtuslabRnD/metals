@@ -67,7 +67,7 @@ class WorksheetProvider(
     statusBar: StatusBar,
     diagnostics: Diagnostics,
     embedded: Embedded,
-    publisher: WorksheetPublisher,
+    publisher: () => WorksheetPublisher,
     compilers: Compilers,
     compilations: Compilations,
     scalaVersionSelector: ScalaVersionSelector
@@ -138,7 +138,7 @@ class WorksheetProvider(
       val input = path.toInputFromBuffers(buffers)
       exportableEvaluations.get(input) match {
         case Some(evaluatedWorksheet) =>
-          publisher.publish(languageClient, path, evaluatedWorksheet)
+          publisher().publish(languageClient, path, evaluatedWorksheet)
         case None =>
       }
     }
@@ -161,7 +161,7 @@ class WorksheetProvider(
         Future.successful(())
     }).flatMap(_ =>
       evaluateAsync(path, token).map(
-        _.foreach(publisher.publish(languageClient, path, _))
+        _.foreach(publisher().publish(languageClient, path, _))
       )
     )
   }
@@ -172,7 +172,7 @@ class WorksheetProvider(
    * for evaluated results hover's provided here
    */
   def hover(path: AbsolutePath, position: Position): Option[Hover] = {
-    publisher.hover(path, position)
+    publisher().hover(path, position)
   }
 
   /**

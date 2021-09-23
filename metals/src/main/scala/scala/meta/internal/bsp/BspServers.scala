@@ -39,7 +39,7 @@ final case class BspServers(
     buildClient: MetalsBuildClient,
     tables: Tables,
     bspGlobalInstallDirectories: List[AbsolutePath],
-    config: MetalsServerConfig
+    config: () => MetalsServerConfig
 )(implicit ec: ExecutionContextExecutorService) {
 
   def resolve(): BspResolvedResult = {
@@ -103,7 +103,7 @@ final case class BspServers(
       client,
       newConnection,
       tables.dismissedNotifications.ReconnectBsp,
-      config,
+      config(),
       details.getName()
     )
   }

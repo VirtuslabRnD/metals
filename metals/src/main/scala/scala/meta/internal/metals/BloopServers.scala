@@ -34,7 +34,7 @@ final case class BloopServers(
     client: MetalsBuildClient,
     languageClient: LanguageClient,
     tables: Tables,
-    config: MetalsServerConfig
+    config: () => MetalsServerConfig
 )(implicit ec: ExecutionContextExecutorService) {
 
   import BloopServers._
@@ -68,9 +68,9 @@ final case class BloopServers(
         workspace,
         client,
         languageClient,
-        () => connectToLauncher(bloopVersion, config.bloopPort),
+        () => connectToLauncher(bloopVersion, config().bloopPort),
         tables.dismissedNotifications.ReconnectBsp,
-        config,
+        config(),
         name
       )
   }

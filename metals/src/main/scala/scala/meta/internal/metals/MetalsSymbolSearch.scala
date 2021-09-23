@@ -23,7 +23,7 @@ class MetalsSymbolSearch(
     workspace: () => AbsolutePath,
     docs: Docstrings,
     wsp: WorkspaceSymbolProvider,
-    defn: DefinitionProvider
+    defn: () => DefinitionProvider
 ) extends SymbolSearch {
   // A cache for definitionSourceToplevels.
   // The key is an absolute path to the dependency source file, and
@@ -40,7 +40,7 @@ class MetalsSymbolSearch(
 
   def definition(symbol: String, source: URI): ju.List[Location] = {
     val sourcePath = Option(source).map(AbsolutePath.fromAbsoluteUri)
-    defn.fromSymbol(symbol, sourcePath)
+    defn().fromSymbol(symbol, sourcePath)
   }
 
   /**
@@ -52,7 +52,7 @@ class MetalsSymbolSearch(
       source: URI
   ): ju.List[String] = {
     val sourcePath = Option(source).map(AbsolutePath.fromAbsoluteUri)
-    defn
+    defn()
       .definitionPathInputFromSymbol(symbol, sourcePath)
       .map(input => {
         val path = AbsolutePath(input.path)

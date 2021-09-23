@@ -37,7 +37,7 @@ import org.eclipse.{lsp4j => l}
 final class Diagnostics(
     buffers: Buffers,
     languageClient: LanguageClient,
-    statistics: StatisticsConfig,
+    statistics: () => StatisticsConfig,
     config: () => UserConfiguration,
     workspace: () => Option[AbsolutePath],
     trees: Trees
@@ -68,7 +68,7 @@ final class Diagnostics(
     }
 
   def onStartCompileBuildTarget(target: BuildTargetIdentifier): Unit = {
-    if (statistics.isDiagnostics) {
+    if (statistics().isDiagnostics) {
       compileTimer(target) = new Timer(Time.system)
     }
   }
